@@ -119,6 +119,7 @@ def generate_structured_gemini(
     system_prompt: str, message: str, schema_type: StructuredSchemaName
 ) -> ProviderResult:
     client, types = _gemini_client()
+    model_class = get_structured_model(schema_type)
     started = perf_counter()
     response = client.models.generate_content(
         model=settings.gemini_model,
@@ -126,10 +127,12 @@ def generate_structured_gemini(
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
             response_mime_type="application/json",
-            response_schema=get_structured_model(schema_type),
+            # response_schema는 Pydantic의 additionalProperties(extra="forbid")를
+            # Gemini API가 거부하므로 raw JSON 스키마 경로를 사용한다.
+            response_json_schema=model_class.model_json_schema(),
         ),
     )
-    parsed = get_structured_model(schema_type).model_validate_json(response.text or "{}")
+    parsed = model_class.model_validate_json(response.text or "{}")
     return ProviderResult(
         "gemini", settings.gemini_model, parsed.model_dump(),
         round((perf_counter() - started) * 1000),
