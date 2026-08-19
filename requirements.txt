@@ -1,0 +1,4 @@
+# Streamlit Cloud 프론트엔드용 (메인 파일: mini_agent_01_llm/frontend/app.py)
+streamlit
+httpx
+pillow
