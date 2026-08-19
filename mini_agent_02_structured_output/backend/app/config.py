@@ -24,6 +24,7 @@ class Settings:
         "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
     ).rstrip("/")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
+    kakao_rest_key: str = os.getenv("KAKAO_REST_KEY", "")
     request_timeout_seconds: float = float(
         os.getenv("REQUEST_TIMEOUT_SECONDS", "60")
     )

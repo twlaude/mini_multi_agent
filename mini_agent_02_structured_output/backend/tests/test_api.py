@@ -133,6 +133,42 @@ def test_legacy_travel_plan_route_remains_compatible() -> None:
     assert response.json()["content"]["destination"] == "강릉"
 
 
+def test_travel_route_mock_returns_geocoded_places(monkeypatch) -> None:
+    from app.schemas import GeoPlace
+
+    monkeypatch.setattr(
+        "app.routers.structured_router.geocode_plan",
+        lambda plan: (
+            [GeoPlace(name=plan.landmarks[0].name, kind="landmark", day=1, order=1,
+                      lat=35.1, lng=129.0, address="부산 어딘가")],
+            [],
+        ),
+    )
+    response = client.post("/api/travel/route-plan", json={
+        "provider": "mock", "message": "부산에 2박 3일 여행을 가요."
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan"]["destination"] == "부산"
+    assert (body["plan"]["nights"], body["plan"]["days"]) == (2, 3)
+    assert body["plan"]["foods"][0]["meal_time"] in ("아침", "점심", "저녁")
+    assert body["places"][0]["kind"] == "landmark"
+    assert body["not_found"] == []
+
+
+def test_travel_route_survives_geocoding_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.kakao_service.geocode_place", lambda *args, **kwargs: None
+    )
+    response = client.post("/api/travel/route-plan", json={
+        "provider": "mock", "message": "서울 여행"
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["places"] == []
+    assert len(body["not_found"]) == len(body["plan"]["landmarks"]) + len(body["plan"]["foods"])
+
+
 def test_structured_compare_keeps_provider_errors() -> None:
     response = client.post("/api/structured/compare", json={
         "providers": ["mock", "openai"], "message": "부산 여행"

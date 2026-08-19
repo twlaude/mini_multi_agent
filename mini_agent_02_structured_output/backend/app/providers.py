@@ -3,7 +3,10 @@ from time import perf_counter
 from typing import Any
 
 from app.config import settings
-from app.schemas import StructuredSchemaName, SupportTicket, TravelPlan
+from app.schemas import (
+    FoodItem, LandmarkItem, StructuredSchemaName, SupportTicket, TravelPlan,
+    TravelRoutePlan,
+)
 
 
 @dataclass
@@ -22,8 +25,12 @@ def generate_mock(system_prompt: str, message: str) -> ProviderResult:
 
 def get_structured_model(
     schema_type: StructuredSchemaName,
-) -> type[TravelPlan] | type[SupportTicket]:
-    return {"travel_plan": TravelPlan, "support_ticket": SupportTicket}[schema_type]
+) -> type[TravelPlan] | type[SupportTicket] | type[TravelRoutePlan]:
+    return {
+        "travel_plan": TravelPlan,
+        "support_ticket": SupportTicket,
+        "travel_route": TravelRoutePlan,
+    }[schema_type]
 
 
 def generate_structured_mock(
@@ -51,6 +58,23 @@ def generate_structured_mock(
         (city for city in ("서울", "부산", "제주", "강릉") if city in message),
         "부산",
     )
+    if schema_type == "travel_route":
+        route = TravelRoutePlan(
+            destination=destination,
+            nights=2,
+            days=3,
+            summary=f"{destination} 핵심 명소와 맛집을 도는 교육용 2박 3일 루트입니다.",
+            landmarks=[
+                LandmarkItem(name=f"{destination}역", summary="여행의 시작점", category="교통", day=1, visit_order=1, stay_minutes=30, tip="짐 보관소를 활용하세요."),
+                LandmarkItem(name=f"{destination}시립미술관", summary="대표 문화 공간", category="문화", day=1, visit_order=2, stay_minutes=90, tip="휴관일을 확인하세요."),
+                LandmarkItem(name=f"{destination}타워", summary="전망 명소", category="전망대", day=2, visit_order=1, stay_minutes=60, tip="야경 시간대를 추천합니다."),
+            ],
+            foods=[
+                FoodItem(name=f"{destination} 전통시장 국밥", cuisine="한식", signature_menu="국밥", price_range="1만원 이하", day=1, meal_time="점심", near_landmark=f"{destination}역"),
+                FoodItem(name=f"{destination} 회센터", cuisine="해산물", signature_menu="모둠회", price_range="3~5만원", day=2, meal_time="저녁", near_landmark=f"{destination}타워"),
+            ],
+        )
+        return ProviderResult("mock", "deterministic-travel-mock", route.model_dump(), 0)
     plan = TravelPlan(
         destination=destination,
         summary=f"{destination}의 대표 장소를 둘러보는 교육용 일정입니다.",
@@ -115,6 +139,22 @@ def generate_gemini(system_prompt: str, message: str) -> ProviderResult:
     )
 
 
+def _gemini_safe_schema(model_class: type) -> dict:
+    # Gemini는 $defs 객체 리스트가 2개 이상인 스키마에서 minItems/maxItems를
+    # 400으로 거부한다 — 생성용 스키마에서만 제거하고 개수 검증은 Pydantic이 한다.
+    def strip(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {
+                k: strip(v) for k, v in node.items()
+                if k not in ("minItems", "maxItems")
+            }
+        if isinstance(node, list):
+            return [strip(v) for v in node]
+        return node
+
+    return strip(model_class.model_json_schema())
+
+
 def generate_structured_gemini(
     system_prompt: str, message: str, schema_type: StructuredSchemaName
 ) -> ProviderResult:
@@ -129,7 +169,7 @@ def generate_structured_gemini(
             response_mime_type="application/json",
             # response_schema는 Pydantic의 additionalProperties(extra="forbid")를
             # Gemini API가 거부하므로 raw JSON 스키마 경로를 사용한다.
-            response_json_schema=model_class.model_json_schema(),
+            response_json_schema=_gemini_safe_schema(model_class),
         ),
     )
     parsed = model_class.model_validate_json(response.text or "{}")

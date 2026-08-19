@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 ProviderName = Literal["mock", "gemini", "openai", "ollama"]
-StructuredSchemaName = Literal["travel_plan", "support_ticket"]
+StructuredSchemaName = Literal["travel_plan", "support_ticket", "travel_route"]
 
 
 class MessageRequest(BaseModel):
@@ -33,7 +33,7 @@ class TravelIntentResult(BaseModel):
     follow_up_question: str = ""
 
 
-class GenerateRequest(MessageRequest):
+class GenerateRequest(MessageRequest):#제너레이트 리퀘스트는 메시지 리퀘스트를 상속받는다는 의미다.
     provider: ProviderName | None = None
     system_prompt: str = Field(
         default="당신은 초보자를 돕는 친절한 여행 도우미입니다.",
@@ -104,6 +104,64 @@ class SupportTicket(BaseModel):
     missing_information: list[str] = Field(default_factory=list, max_length=10)
 
 
+class LandmarkItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    summary: str = Field(min_length=1, max_length=300)
+    category: str = Field(min_length=1, max_length=50)
+    day: int = Field(ge=1, le=30)
+    visit_order: int = Field(ge=1, le=10)
+    stay_minutes: int = Field(ge=10, le=600)
+    tip: str = Field(default="", max_length=300)
+
+
+class FoodItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    cuisine: str = Field(min_length=1, max_length=50)
+    signature_menu: str = Field(min_length=1, max_length=100)
+    price_range: str = Field(min_length=1, max_length=50)
+    day: int = Field(ge=1, le=30)
+    meal_time: Literal["아침", "점심", "저녁"]
+    near_landmark: str = Field(default="", max_length=100)
+
+
+class TravelRoutePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    destination: str = Field(min_length=1)
+    nights: int = Field(ge=0, le=29)
+    days: int = Field(ge=1, le=30)
+    summary: str = Field(min_length=1, max_length=500)
+    landmarks: list[LandmarkItem] = Field(min_length=1, max_length=30)
+    foods: list[FoodItem] = Field(default_factory=list, max_length=30)
+
+
+class TravelRouteRequest(MessageRequest):
+    provider: ProviderName | None = None
+
+
+class GeoPlace(BaseModel):
+    name: str
+    kind: Literal["landmark", "food"]
+    day: int
+    order: int  # landmark는 visit_order, food는 0 (경로선은 landmark만 잇는다)
+    lat: float
+    lng: float
+    address: str = ""
+
+
+class TravelRouteResult(BaseModel):
+    provider: ProviderName
+    model: str
+    plan: TravelRoutePlan
+    places: list[GeoPlace]
+    not_found: list[str] = Field(default_factory=list)
+    latency_ms: int
+
+
 class StructuredValidationRequest(BaseModel):
     schema_type: StructuredSchemaName = "travel_plan"
     payload: dict[str, Any]
@@ -112,7 +170,7 @@ class StructuredValidationRequest(BaseModel):
 class StructuredValidationResult(BaseModel):
     schema_type: StructuredSchemaName
     valid: bool
-    data: TravelPlan | SupportTicket | None = None
+    data: TravelPlan | SupportTicket | TravelRoutePlan | None = None
     errors: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -132,7 +190,7 @@ class StructuredOutputResult(BaseModel):
     provider: ProviderName
     model: str
     schema_type: StructuredSchemaName
-    content: TravelPlan | SupportTicket
+    content: TravelPlan | SupportTicket | TravelRoutePlan
     latency_ms: int
 
 
@@ -155,7 +213,7 @@ class StructuredComparisonItem(BaseModel):
     status: Literal["success", "error"]
     model: str = ""
     schema_type: StructuredSchemaName
-    content: TravelPlan | SupportTicket | None = None
+    content: TravelPlan | SupportTicket | TravelRoutePlan | None = None
     latency_ms: int = 0
     error: str | None = None
 
