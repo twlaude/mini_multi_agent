@@ -3,6 +3,7 @@ from time import perf_counter
 from typing import Any
 
 from app.config import settings
+from app.data.cities import KOREA_CITIES
 from app.schemas import (
     FoodItem, LandmarkItem, StructuredSchemaName, SupportTicket, TravelPlan,
     TravelRoutePlan,
@@ -54,9 +55,9 @@ def generate_structured_mock(
         return ProviderResult(
             "mock", "deterministic-support-mock", ticket.model_dump(), 0
         )
-    destination = next(
-        (city for city in ("서울", "부산", "제주", "강릉") if city in message),
-        "부산",
+    mentioned_cities = [city.name for city in KOREA_CITIES if city.name in message]
+    destination = (
+        min(mentioned_cities, key=message.index) if mentioned_cities else "부산"
     )
     if schema_type == "travel_route":
         route = TravelRoutePlan(

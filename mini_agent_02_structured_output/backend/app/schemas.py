@@ -1,6 +1,7 @@
+from datetime import date, time
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 ProviderName = Literal["mock", "gemini", "openai", "ollama"]
@@ -139,13 +140,56 @@ class TravelRoutePlan(BaseModel):
     foods: list[FoodItem] = Field(default_factory=list, max_length=30)
 
 
-class TravelRouteRequest(MessageRequest):
+class OriginPoint(BaseModel):
+    """프론트에서 확정한 브라우저 위치 또는 장소 검색 결과."""
+
+    lat: float
+    lng: float
+    name: str = ""
+
+
+class TravelRouteRequest(BaseModel):
     provider: ProviderName | None = None
+    # 기존 자연어 한 줄 요청도 계속 받는다.
+    message: str | None = Field(default=None, min_length=1, max_length=4000)
+    origin: OriginPoint | None = None
+    destination: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+
+    @model_validator(mode="after")
+    def validate_request(self) -> "TravelRouteRequest":
+        has_schedule = bool(
+            self.destination and self.start_date is not None and self.end_date is not None
+        )
+        if not self.message and not has_schedule:
+            raise ValueError(
+                "message 또는 destination, start_date, end_date를 입력해야 합니다."
+            )
+        if self.start_date is not None and self.end_date is not None:
+            nights = (self.end_date - self.start_date).days
+            if nights < 0:
+                raise ValueError("end_date는 start_date보다 빠를 수 없습니다.")
+            if nights >= 30:
+                raise ValueError("여행 기간은 30일 이하여야 합니다.")
+        return self
+
+
+class TravelSchedule(BaseModel):
+    destination: str
+    start_date: date
+    end_date: date
+    start_time: time | None = None
+    end_time: time | None = None
+    nights: int
+    days: int
 
 
 class GeoPlace(BaseModel):
     name: str
-    kind: Literal["landmark", "food"]
+    kind: Literal["landmark", "food", "origin"]
     day: int
     order: int  # landmark는 visit_order, food는 0 (경로선은 landmark만 잇는다)
     lat: float
@@ -160,6 +204,36 @@ class TravelRouteResult(BaseModel):
     places: list[GeoPlace]
     not_found: list[str] = Field(default_factory=list)
     latency_ms: int
+    origin: GeoPlace | None = None
+    schedule: TravelSchedule | None = None
+
+
+class PlaceCandidate(BaseModel):
+    name: str
+    address: str
+    lat: float
+    lng: float
+    category: str = ""
+
+
+class PlaceSearchResult(BaseModel):
+    query: str
+    candidates: list[PlaceCandidate] = Field(default_factory=list)
+    note: str = ""
+
+
+class ReverseGeocodeResult(BaseModel):
+    lat: float
+    lng: float
+    address: str = ""
+    region: str = ""
+    note: str = ""
+
+
+class CityItem(BaseModel):
+    name: str
+    lat: float
+    lng: float
 
 
 class StructuredValidationRequest(BaseModel):

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -167,6 +169,78 @@ def test_travel_route_survives_geocoding_failure(monkeypatch) -> None:
     body = response.json()
     assert body["places"] == []
     assert len(body["not_found"]) == len(body["plan"]["landmarks"]) + len(body["plan"]["foods"])
+
+
+def test_structured_travel_route_returns_schedule_and_origin(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.structured_router.geocode_plan", lambda _plan: ([], [])
+    )
+    response = client.post("/api/travel/route-plan", json={
+        "provider": "mock",
+        "origin": {"name": "서울역", "lat": 37.5547, "lng": 126.9707},
+        "destination": "여수",
+        "start_date": "2026-08-22",
+        "end_date": "2026-08-24",
+        "start_time": "09:00",
+        "end_time": "18:00",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan"]["destination"] == "여수"
+    assert (body["schedule"]["nights"], body["schedule"]["days"]) == (2, 3)
+    assert body["schedule"]["start_time"] == "09:00:00"
+    assert body["origin"] == {
+        "name": "서울역", "kind": "origin", "day": 0, "order": 0,
+        "lat": 37.5547, "lng": 126.9707, "address": "서울역",
+    }
+
+
+def test_travel_route_requires_message_or_complete_schedule() -> None:
+    response = client.post("/api/travel/route-plan", json={"provider": "mock"})
+    assert response.status_code == 422
+    assert "message 또는 destination" in response.text
+
+
+def test_place_search_and_reverse_parse_kakao_candidates(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self.payload
+
+    def fake_get(url: str, **_kwargs) -> FakeResponse:
+        if url.endswith("keyword.json"):
+            return FakeResponse({"documents": [{
+                "place_name": "강남역 2호선",
+                "road_address_name": "서울 강남구 강남대로 396",
+                "address_name": "서울 강남구 역삼동 858",
+                "x": "127.0276", "y": "37.4979",
+                "category_name": "교통,수송 > 지하철,전철 > 수도권2호선",
+            }]})
+        return FakeResponse({"documents": [{
+            "region_type": "H", "address_name": "서울 중구 회현동",
+            "region_1depth_name": "서울특별시",
+        }]})
+
+    monkeypatch.setattr(
+        "app.services.kakao_service.settings",
+        SimpleNamespace(kakao_rest_key="test-key"),
+    )
+    monkeypatch.setattr("app.services.kakao_service.httpx.get", fake_get)
+
+    search = client.get("/api/travel/places/search", params={"query": "강남역"})
+    reverse = client.get(
+        "/api/travel/places/reverse", params={"lat": 37.5547, "lng": 126.9707}
+    )
+    assert search.status_code == reverse.status_code == 200
+    assert search.json()["candidates"][0]["name"] == "강남역 2호선"
+    assert search.json()["candidates"][0]["lat"] == 37.4979
+    assert reverse.json()["address"] == "서울 중구 회현동"
+    assert reverse.json()["region"] == "서울특별시"
 
 
 def test_structured_compare_keeps_provider_errors() -> None:
