@@ -105,9 +105,15 @@ def complete_transport(payload: TravelTransportRequest) -> ToolCompleteResult:
 
     trace = [{"stage": "tool_selection", "data": decision.model_dump(mode="json")}]
     if decision.tool_name is None:
+        answer = (
+            "Tool 사용이 비활성화되어 교통편을 조회하지 않았습니다."
+            if payload.tool_choice == "none"
+            else "질문에서 교통편 Tool을 고르지 못했습니다. "
+            "'KTX로 가면?' 또는 '차로 가면?'처럼 물어보세요."
+        )
         return ToolCompleteResult(
             provider=selected, question=payload.message, decision=decision,
-            final_answer="Tool 사용이 비활성화되어 교통편을 조회하지 않았습니다.", trace=trace,
+            final_answer=answer, trace=trace,
         )
 
     arguments = dict(decision.arguments)

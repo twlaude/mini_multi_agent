@@ -8,6 +8,10 @@ from app.schemas import TransitRouteArgs
 
 ODSAY_URL = "https://api.odsay.com/v1/api/searchPubTransPathT"
 BASE_NOTE = "도시간 검색은 역/터미널 기준 — 역↔목적지 시내 이동은 별도"
+TRAIN_LABEL_BY_TYPE = {
+    1: "KTX", 2: "새마을", 3: "무궁화", 5: "누리로",
+    7: "ITX-청춘", 8: "SRT", 9: "ITX-새마을",
+}
 
 
 def _empty(note: str) -> dict:
@@ -72,9 +76,8 @@ def search_transit_routes(args: TransitRouteArgs) -> dict:
             sub = {}
         traffic_type = sub.get("trafficType")
         if route_type == "train":
-            label = (
-                "SRT" if sub.get("trainType") == 1 and sub.get("startName") == "수서"
-                else "KTX" if sub.get("trainType") == 1 else "일반열차"
+            label = TRAIN_LABEL_BY_TYPE.get(
+                _optional_int(sub.get("trainType")), "열차"
             )
         else:
             label = {5: "고속버스", 6: "시외버스", 7: "항공"}.get(

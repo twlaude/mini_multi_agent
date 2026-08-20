@@ -12,6 +12,13 @@ from app.schemas import (
 from app.tools.definitions import get_tool_definitions
 
 
+TRANSPORT_TOOL_SELECTION_INSTRUCTION = (
+    "사용자는 이미 출발지와 도착지를 정했습니다. 질문이 자가용·운전이면 "
+    "get_driving_route, 기차·버스·항공·대중교통이면 get_transit_route를 고르고 "
+    "mode 등 선호값만 채우세요. 교통편 질문이면 반드시 Tool 하나를 호출하세요."
+)
+
+
 @dataclass
 class ProviderResult:
     provider: str
@@ -158,7 +165,7 @@ def select_tool_openai(message: str, tool_choice: str = "auto") -> ToolDecision:
     started = perf_counter()
     response = OpenAI(api_key=settings.openai_api_key).responses.create(
         model=settings.openai_model,
-        instructions="필요한 교통 조회 Tool 하나와 선호값만 선택하세요.",
+        instructions=TRANSPORT_TOOL_SELECTION_INSTRUCTION,
         input=message, tools=tools, tool_choice=tool_choice,
     )
     call = next(
@@ -220,10 +227,10 @@ def select_tool_gemini(message: str, tool_choice: str = "auto") -> ToolDecision:
         )
         for tool in get_tool_definitions()
     ]
-    prefix = "반드시 교통 조회 Tool 하나를 선택하세요. " if tool_choice == "required" else ""
     started = perf_counter()
     response = client.models.generate_content(
-        model=settings.gemini_model, contents=prefix + message,
+        model=settings.gemini_model,
+        contents=f"{TRANSPORT_TOOL_SELECTION_INSTRUCTION}\n사용자 질문: {message}",
         config=types.GenerateContentConfig(
             tools=[types.Tool(function_declarations=declarations)]
         ),

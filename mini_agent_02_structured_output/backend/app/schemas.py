@@ -148,6 +148,23 @@ class OriginPoint(BaseModel):
     name: str = ""
 
 
+class TransitRoutePreference(BaseModel):
+    """LLM이 선택하는 대중교통 선호값. 좌표는 서버가 주입한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["all", "train", "bus", "air"] = "all"
+
+
+class DrivingRoutePreference(BaseModel):
+    """LLM이 선택하는 자가용 비용 계산 선호값. 좌표는 서버가 주입한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fuel_efficiency_kmpl: float = Field(default=12.0, gt=0, le=40)
+    fuel_price_per_liter: int = Field(default=1650, gt=0, le=5000)
+
+
 class TransitRouteArgs(BaseModel):
     """LLM이 제안하되 백엔드가 좌표와 출발 시각을 확정하는 대중교통 인자."""
 

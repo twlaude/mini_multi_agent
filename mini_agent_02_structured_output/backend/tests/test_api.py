@@ -253,7 +253,7 @@ def test_odsay_normalizes_ktx_and_srt(monkeypatch) -> None:
             return None
 
         def json(self) -> dict:
-            def path(start: str, minutes: int, fare: int) -> dict:
+            def path(start: str, minutes: int, fare: int, train_type: int) -> dict:
                 return {
                     "pathType": 11,
                     "info": {
@@ -261,14 +261,14 @@ def test_odsay_normalizes_ktx_and_srt(monkeypatch) -> None:
                         "firstStartStation": start, "lastEndStation": "부산역",
                     },
                     "subPath": [{
-                        "trafficType": 4, "trainType": 1, "startName": start,
+                        "trafficType": 4, "trainType": train_type, "startName": start,
                         "trainSpSeatPayment": fare + 20000,
                         "intervalTime": 30, "intervalCount": 20,
                     }],
                 }
 
             return {"result": {"path": [
-                path("서울역", 138, 59800), path("수서", 145, 52600)
+                path("서울역", 138, 59800, 1), path("수서", 130, 52200, 8)
             ]}}
 
     def fake_get(url: str, **kwargs) -> FakeResponse:
@@ -285,9 +285,21 @@ def test_odsay_normalizes_ktx_and_srt(monkeypatch) -> None:
         origin_lat=37.5547, origin_lng=126.9707,
         dest_lat=35.1631, dest_lng=129.1635, mode="train",
     ))
-    assert [option["label"] for option in result["options"]] == ["KTX", "SRT"]
-    assert result["options"][0]["fare_krw"] == 59800
-    assert result["options"][0]["premium_fare_krw"] == 79800
+    assert [option["label"] for option in result["options"]] == ["SRT", "KTX"]
+    assert result["options"][0]["fare_krw"] == 52200
+    assert result["options"][1]["premium_fare_krw"] == 79800
+
+
+def test_tool_definitions_expose_only_llm_preferences() -> None:
+    response = client.get("/api/tools")
+    assert response.status_code == 200
+    schemas = {
+        tool["name"]: tool["input_schema"] for tool in response.json()["tools"]
+    }
+    transit = schemas["get_transit_route"]
+    assert "origin_lat" not in transit["properties"]
+    assert "mode" in transit["properties"]
+    assert "mode" not in transit.get("required", [])
 
 
 def test_kakao_mobility_normalizes_costs(monkeypatch) -> None:
