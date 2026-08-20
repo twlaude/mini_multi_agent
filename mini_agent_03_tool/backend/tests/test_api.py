@@ -120,7 +120,12 @@ def test_mock_selects_forecast_for_future_weather() -> None:
     assert body["tool_name"] == "get_weather_forecast"
     assert body["arguments"]["city"] == "부산"
     assert "target_date" in body["arguments"]
-    assert [item["stage"] for item in body["trace"]] == ["tool_selection", "tool_result", "final_answer"]
+
+    complete = client.post("/api/tools/complete", json={"provider": "mock", "message": "내일 부산에 비가 올까?"})
+    assert complete.status_code == 200
+    complete_body = complete.json()
+    assert complete_body["decision"]["tool_name"] == "get_weather_forecast"
+    assert [item["stage"] for item in complete_body["trace"]] == ["tool_selection", "tool_result", "final_answer"]
 
 
 def test_agent_loop_asks_before_inventing_missing_arguments() -> None:

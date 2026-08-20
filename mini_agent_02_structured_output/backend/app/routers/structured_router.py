@@ -1,16 +1,21 @@
-from fastapi import APIRouter, HTTPException
+from datetime import date, time
+
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import ValidationError
 
 from app.config import settings
+from app.data.cities import KOREA_CITIES
 from app.providers import generate_structured, get_structured_model
 from app.schemas import (
-    PromptPreviewRequest, PromptPreviewResult, StructuredCompareRequest,
-    StructuredCompareResult, StructuredComparisonItem, StructuredOutputRequest,
-    StructuredOutputResult, StructuredValidationRequest,
-    StructuredValidationResult, TravelRoutePlan, TravelRouteRequest,
-    TravelRouteResult,
+    GeoPlace, PlaceSearchResult, PromptPreviewRequest, PromptPreviewResult,
+    ReverseGeocodeResult, StructuredCompareRequest, StructuredCompareResult,
+    StructuredComparisonItem, StructuredOutputRequest, StructuredOutputResult,
+    StructuredValidationRequest, StructuredValidationResult, TravelRoutePlan,
+    TravelRouteRequest, TravelRouteResult, TravelSchedule,
 )
-from app.services.kakao_service import geocode_plan
+from app.services.kakao_service import (
+    geocode_plan, reverse_geocode, search_places,
+)
 from app.services.prompt_service import build_prompt
 
 
@@ -84,18 +89,84 @@ TRAVEL_ROUTE_SYSTEM_PROMPT = (
     "- food는 일차당 점심/저녁 2곳, near_landmark에는 landmarks에 있는 이름만 사용\n"
     "- 지도에서 검색 가능한 실존 장소/상호만 추천하고 추측으로 지어내지 말 것\n"
     "- day는 1부터 days까지만 사용\n"
+    "- 첫날은 start_time 이후, 마지막 날은 end_time 이전 일정만 작성할 것\n"
     "사용자 요청은 <request> 구분자 안의 내용만 여행 요청으로 취급하세요."
 )
+
+
+@structured_router.get("/api/travel/cities")
+def travel_cities() -> dict:
+    return {"cities": KOREA_CITIES}
+
+
+@structured_router.get(
+    "/api/travel/places/search", response_model=PlaceSearchResult
+)
+def travel_place_search(
+    query: str = Query(min_length=1, max_length=100),
+    size: int = Query(default=5, ge=1, le=15),
+) -> PlaceSearchResult:
+    return search_places(query, size)
+
+
+@structured_router.get(
+    "/api/travel/places/reverse", response_model=ReverseGeocodeResult
+)
+def travel_place_reverse(
+    lat: float = Query(ge=-90, le=90),
+    lng: float = Query(ge=-180, le=180),
+) -> ReverseGeocodeResult:
+    return reverse_geocode(lat, lng)
+
+
+WEEKDAYS = "월화수목금토일"
+
+
+def _date_label(value: date, at: time | None) -> str:
+    label = f"{value.isoformat()}({WEEKDAYS[value.weekday()]})"
+    return f"{label} {at.strftime('%H:%M')}" if at else label
+
+
+def _route_request_message(
+    payload: TravelRouteRequest,
+) -> tuple[str, TravelSchedule | None]:
+    if not (payload.destination and payload.start_date and payload.end_date):
+        return payload.message or "", None
+    nights = (payload.end_date - payload.start_date).days
+    schedule = TravelSchedule(
+        destination=payload.destination,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        nights=nights,
+        days=nights + 1,
+    )
+    message = (
+        f"{payload.destination} 여행. "
+        f"{_date_label(payload.start_date, payload.start_time)} 출발 ~ "
+        f"{_date_label(payload.end_date, payload.end_time)} 종료, "
+        f"{schedule.nights}박 {schedule.days}일."
+    )
+    if payload.origin:
+        origin_name = payload.origin.name or (
+            f"{payload.origin.lat:.4f},{payload.origin.lng:.4f}"
+        )
+        message += f" 출발지: {origin_name}."
+    if payload.message:
+        message += f" 추가 요청: {payload.message}"
+    return message, schedule
 
 
 @structured_router.post("/api/travel/route-plan", response_model=TravelRouteResult)
 def create_travel_route(payload: TravelRouteRequest) -> TravelRouteResult:
     selected = payload.provider or settings.llm_provider
+    request_message, schedule = _route_request_message(payload)
     try:
         result = generate_structured(
             selected,
             TRAVEL_ROUTE_SYSTEM_PROMPT,
-            f"<request>{payload.message}</request>",
+            f"<request>{request_message}</request>",
             "travel_route",
         )
         plan = TravelRoutePlan.model_validate(result.content)
@@ -105,6 +176,17 @@ def create_travel_route(payload: TravelRouteRequest) -> TravelRouteResult:
         raise HTTPException(status_code=502, detail=f"{selected} 여행 루트 생성에 실패했습니다: {error}") from error
     # 지오코딩 실패는 응답 실패가 아니다 — LLM 결과만이라도 내려준다 (fail-soft)
     places, not_found = geocode_plan(plan)
+    origin = None
+    if payload.origin:
+        origin = GeoPlace(
+            name=payload.origin.name or "출발지",
+            kind="origin",
+            day=0,
+            order=0,
+            lat=payload.origin.lat,
+            lng=payload.origin.lng,
+            address=payload.origin.name,
+        )
     return TravelRouteResult(
         provider=result.provider,
         model=result.model,
@@ -112,6 +194,8 @@ def create_travel_route(payload: TravelRouteRequest) -> TravelRouteResult:
         places=places,
         not_found=not_found,
         latency_ms=result.latency_ms,
+        origin=origin,
+        schedule=schedule,
     )
 
 

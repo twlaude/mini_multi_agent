@@ -1,3 +1,6 @@
+from datetime import datetime
+from types import SimpleNamespace
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -167,6 +170,243 @@ def test_travel_route_survives_geocoding_failure(monkeypatch) -> None:
     body = response.json()
     assert body["places"] == []
     assert len(body["not_found"]) == len(body["plan"]["landmarks"]) + len(body["plan"]["foods"])
+
+
+def test_structured_travel_route_returns_schedule_and_origin(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.structured_router.geocode_plan", lambda _plan: ([], [])
+    )
+    response = client.post("/api/travel/route-plan", json={
+        "provider": "mock",
+        "origin": {"name": "서울역", "lat": 37.5547, "lng": 126.9707},
+        "destination": "여수",
+        "start_date": "2026-08-22",
+        "end_date": "2026-08-24",
+        "start_time": "09:00",
+        "end_time": "18:00",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan"]["destination"] == "여수"
+    assert (body["schedule"]["nights"], body["schedule"]["days"]) == (2, 3)
+    assert body["schedule"]["start_time"] == "09:00:00"
+    assert body["origin"] == {
+        "name": "서울역", "kind": "origin", "day": 0, "order": 0,
+        "lat": 37.5547, "lng": 126.9707, "address": "서울역",
+    }
+
+
+def test_travel_route_requires_message_or_complete_schedule() -> None:
+    response = client.post("/api/travel/route-plan", json={"provider": "mock"})
+    assert response.status_code == 422
+    assert "message 또는 destination" in response.text
+
+
+def test_place_search_and_reverse_parse_kakao_candidates(monkeypatch) -> None:
+    class FakeResponse:
+        def __init__(self, payload: dict) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self.payload
+
+    def fake_get(url: str, **_kwargs) -> FakeResponse:
+        if url.endswith("keyword.json"):
+            return FakeResponse({"documents": [{
+                "place_name": "강남역 2호선",
+                "road_address_name": "서울 강남구 강남대로 396",
+                "address_name": "서울 강남구 역삼동 858",
+                "x": "127.0276", "y": "37.4979",
+                "category_name": "교통,수송 > 지하철,전철 > 수도권2호선",
+            }]})
+        return FakeResponse({"documents": [{
+            "region_type": "H", "address_name": "서울 중구 회현동",
+            "region_1depth_name": "서울특별시",
+        }]})
+
+    monkeypatch.setattr(
+        "app.services.kakao_service.settings",
+        SimpleNamespace(kakao_rest_key="test-key"),
+    )
+    monkeypatch.setattr("app.services.kakao_service.httpx.get", fake_get)
+
+    search = client.get("/api/travel/places/search", params={"query": "강남역"})
+    reverse = client.get(
+        "/api/travel/places/reverse", params={"lat": 37.5547, "lng": 126.9707}
+    )
+    assert search.status_code == reverse.status_code == 200
+    assert search.json()["candidates"][0]["name"] == "강남역 2호선"
+    assert search.json()["candidates"][0]["lat"] == 37.4979
+    assert reverse.json()["address"] == "서울 중구 회현동"
+    assert reverse.json()["region"] == "서울특별시"
+
+
+def test_odsay_normalizes_ktx_and_srt(monkeypatch) -> None:
+    from app.schemas import TransitRouteArgs
+    from app.services.odsay_service import search_transit_routes
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            def path(start: str, minutes: int, fare: int, train_type: int) -> dict:
+                return {
+                    "pathType": 11,
+                    "info": {
+                        "totalTime": minutes, "totalPayment": fare,
+                        "firstStartStation": start, "lastEndStation": "부산역",
+                    },
+                    "subPath": [{
+                        "trafficType": 4, "trainType": train_type, "startName": start,
+                        "trainSpSeatPayment": fare + 20000,
+                        "intervalTime": 30, "intervalCount": 20,
+                    }],
+                }
+
+            return {"result": {"path": [
+                path("서울역", 138, 59800, 1), path("수서", 130, 52200, 8)
+            ]}}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert url.endswith("searchPubTransPathT")
+        assert kwargs["headers"]["Referer"] == "http://localhost"
+        assert kwargs["params"]["SearchType"] == 1
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.services.odsay_service.settings", SimpleNamespace(odsay_key="test-key")
+    )
+    monkeypatch.setattr("app.services.odsay_service.httpx.get", fake_get)
+    result = search_transit_routes(TransitRouteArgs(
+        origin_lat=37.5547, origin_lng=126.9707,
+        dest_lat=35.1631, dest_lng=129.1635, mode="train",
+    ))
+    assert [option["label"] for option in result["options"]] == ["SRT", "KTX"]
+    assert result["options"][0]["fare_krw"] == 52200
+    assert result["options"][1]["premium_fare_krw"] == 79800
+
+
+def test_tool_definitions_expose_only_llm_preferences() -> None:
+    response = client.get("/api/tools")
+    assert response.status_code == 200
+    schemas = {
+        tool["name"]: tool["input_schema"] for tool in response.json()["tools"]
+    }
+    transit = schemas["get_transit_route"]
+    assert "origin_lat" not in transit["properties"]
+    assert "mode" in transit["properties"]
+    assert "mode" not in transit.get("required", [])
+
+
+def test_kakao_mobility_normalizes_costs(monkeypatch) -> None:
+    from app.schemas import DrivingRouteArgs
+    from app.services.kakao_mobility_service import search_driving_route
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"routes": [{
+                "result_code": 0,
+                "summary": {
+                    "distance": 408000, "duration": 18420,
+                    "fare": {"toll": 22000, "taxi": 420000},
+                },
+            }]}
+
+    def fake_get(url: str, **kwargs) -> FakeResponse:
+        assert url.endswith("/future/directions")
+        assert kwargs["params"]["departure_time"] == "202608220900"
+        assert kwargs["headers"]["Authorization"] == "KakaoAK test-key"
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "app.services.kakao_mobility_service.settings",
+        SimpleNamespace(kakao_rest_key="test-key"),
+    )
+    monkeypatch.setattr("app.services.kakao_mobility_service.httpx.get", fake_get)
+    result = search_driving_route(DrivingRouteArgs(
+        origin_lat=37.5547, origin_lng=126.9707,
+        dest_lat=35.1631, dest_lng=129.1635,
+        departure_time=datetime(2026, 8, 22, 9, 0),
+    ))
+    assert (result["distance_km"], result["minutes"]) == (408.0, 307)
+    assert (result["toll_krw"], result["fuel_krw"], result["total_krw"]) == (
+        22000, 56100, 78100
+    )
+
+
+def test_tool_run_rejects_unknown_tool() -> None:
+    response = client.post("/api/tools/run", json={
+        "tool_name": "book_train_ticket", "arguments": {}
+    })
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == "TOOL_NOT_ALLOWED"
+
+
+def test_tool_run_reports_argument_validation() -> None:
+    response = client.post("/api/tools/run", json={
+        "tool_name": "get_transit_route", "arguments": {"mode": "train"}
+    })
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == "TOOL_VALIDATION_ERROR"
+    assert {item["field"] for item in response.json()["error"]["details"]} >= {
+        "origin_lat", "origin_lng", "dest_lat", "dest_lng"
+    }
+
+
+def test_transport_mock_selects_tool_and_overwrites_coordinates(monkeypatch) -> None:
+    from app.providers import select_tool_mock
+
+    calls: list[tuple[str, dict]] = []
+
+    def fake_select(_provider: str, message: str, tool_choice: str):
+        decision = select_tool_mock(message, tool_choice)
+        decision.arguments.update({
+            "origin_lat": 0, "origin_lng": 0, "dest_lat": 0, "dest_lng": 0,
+            "departure_time": "2000-01-01T00:00:00",
+        })
+        return decision
+
+    def fake_run(name: str, arguments: dict) -> dict:
+        calls.append((name, dict(arguments)))
+        if name == "get_driving_route":
+            return {
+                "distance_km": 408.0, "minutes": 307, "toll_krw": 22000,
+                "fuel_krw": 56100, "total_krw": 78100,
+            }
+        return {"options": [{
+            "label": "KTX", "from": "서울역", "to": "부산역",
+            "minutes": 138, "fare_krw": 59800,
+        }]}
+
+    monkeypatch.setattr("app.routers.transport_router.select_tool", fake_select)
+    monkeypatch.setattr("app.routers.transport_router.run_tool", fake_run)
+    base = {
+        "provider": "mock",
+        "origin": {"name": "서울역", "lat": 37.5547, "lng": 126.9707},
+        "destination": {"name": "해운대", "lat": 35.1631, "lng": 129.1635},
+    }
+    driving = client.post("/api/travel/transport", json={
+        **base, "message": "차로 가면?", "departure_time": "2026-08-22T09:00:00"
+    })
+    transit = client.post("/api/travel/transport", json={
+        **base, "message": "KTX로 가면?"
+    })
+    assert driving.status_code == transit.status_code == 200
+    assert [call[0] for call in calls] == ["get_driving_route", "get_transit_route"]
+    assert calls[0][1]["origin_lat"] == 37.5547
+    assert calls[0][1]["dest_lng"] == 129.1635
+    assert calls[0][1]["departure_time"] == "2026-08-22T09:00:00"
+    assert calls[1][1]["mode"] == "train"
+    assert "departure_time" not in calls[1][1]
+    assert "합계 78,100원" in driving.json()["final_answer"]
+    assert "KTX 서울역→부산역 2시간 18분 59,800원" in transit.json()["final_answer"]
 
 
 def test_structured_compare_keeps_provider_errors() -> None:

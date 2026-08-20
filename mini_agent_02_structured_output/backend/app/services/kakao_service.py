@@ -5,10 +5,77 @@ from typing import Literal
 import httpx
 
 from app.config import settings
-from app.schemas import GeoPlace, TravelRoutePlan
+from app.schemas import (
+    GeoPlace, PlaceCandidate, PlaceSearchResult, ReverseGeocodeResult,
+    TravelRoutePlan,
+)
 
 
 KAKAO_LOCAL_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
+KAKAO_REVERSE_URL = "https://dapi.kakao.com/v2/local/geo/coord2regioncode.json"
+
+
+def search_places(query: str, size: int = 5) -> PlaceSearchResult:
+    """장소 검색은 후보가 없어도 오류 대신 빈 목록과 안내를 반환한다."""
+    if not settings.kakao_rest_key:
+        return PlaceSearchResult(
+            query=query, note="KAKAO_REST_KEY가 없어 장소 검색을 건너뛰었습니다."
+        )
+    try:
+        response = httpx.get(
+            KAKAO_LOCAL_URL,
+            params={"query": query, "size": size},
+            headers={"Authorization": f"KakaoAK {settings.kakao_rest_key}"},
+            timeout=5,
+        )
+        response.raise_for_status()
+        candidates = [
+            PlaceCandidate(
+                name=item["place_name"],
+                address=item.get("road_address_name") or item.get("address_name", ""),
+                lat=float(item["y"]),
+                lng=float(item["x"]),
+                category=item.get("category_name", ""),
+            )
+            for item in response.json().get("documents", [])
+        ]
+        return PlaceSearchResult(query=query, candidates=candidates)
+    except Exception:
+        return PlaceSearchResult(
+            query=query, note="카카오 장소 검색에 실패해 빈 결과를 반환했습니다."
+        )
+
+
+def reverse_geocode(lat: float, lng: float) -> ReverseGeocodeResult:
+    """GPS 좌표를 사람이 읽을 수 있는 행정동 주소로 바꾼다 (fail-soft)."""
+    empty = ReverseGeocodeResult(lat=lat, lng=lng)
+    if not settings.kakao_rest_key:
+        empty.note = "KAKAO_REST_KEY가 없어 좌표 변환을 건너뛰었습니다."
+        return empty
+    try:
+        response = httpx.get(
+            KAKAO_REVERSE_URL,
+            params={"x": lng, "y": lat},
+            headers={"Authorization": f"KakaoAK {settings.kakao_rest_key}"},
+            timeout=5,
+        )
+        response.raise_for_status()
+        documents = response.json().get("documents", [])
+        document = next(
+            (item for item in documents if item.get("region_type") == "H"), None
+        )
+        if document is None:
+            empty.note = "해당 좌표의 행정동 정보를 찾지 못했습니다."
+            return empty
+        return ReverseGeocodeResult(
+            lat=lat,
+            lng=lng,
+            address=document.get("address_name", ""),
+            region=document.get("region_1depth_name", ""),
+        )
+    except Exception:
+        empty.note = "카카오 좌표 변환에 실패해 빈 결과를 반환했습니다."
+        return empty
 
 
 def geocode_place(
@@ -18,30 +85,18 @@ def geocode_place(
     day: int,
     order: int,
 ) -> GeoPlace | None:
-    if not settings.kakao_rest_key:
+    candidates = search_places(query, size=1).candidates
+    if not candidates:
         return None
-    try:
-        response = httpx.get(
-            KAKAO_LOCAL_URL,
-            params={"query": query, "size": 1},
-            headers={"Authorization": f"KakaoAK {settings.kakao_rest_key}"},
-            timeout=5,
-        )
-        response.raise_for_status()
-        documents = response.json().get("documents", [])
-    except Exception:
-        return None
-    if not documents:
-        return None
-    document = documents[0]
+    candidate = candidates[0]
     return GeoPlace(
         name=name,
         kind=kind,
         day=day,
         order=order,
-        lat=float(document["y"]),
-        lng=float(document["x"]),
-        address=document.get("road_address_name") or document.get("address_name", ""),
+        lat=candidate.lat,
+        lng=candidate.lng,
+        address=candidate.address,
     )
 
 

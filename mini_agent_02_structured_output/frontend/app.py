@@ -14,10 +14,12 @@ validation_page = st.Page("app_pages/08_pydantic_validation.py", title="Pydantic
 structured_page = st.Page("app_pages/09_structured_output.py", title="Structured Output")
 image_page = st.Page("app_pages/10_image_analysis.py", title="이미지 분석")
 tts_page = st.Page("app_pages/11_tts.py", title="음성 생성")
+travel_route_page = st.Page("app_pages/12_travel_route.py", title="여행 루트 추천")
 
 navigation = st.navigation(
     [home_page, concept_page, travel_page, environment_page, llm_page, provider_page,
-     prompt_page, validation_page, structured_page, image_page, tts_page],
+     prompt_page, validation_page, structured_page, travel_route_page, image_page,
+     tts_page],
     position="hidden",
 )
 
@@ -40,6 +42,7 @@ with st.sidebar:
         st.page_link(prompt_page, label="2-1. Prompt 구성")
         st.page_link(validation_page, label="2-2. Pydantic 검증")
         st.page_link(structured_page, label="2-3. Structured Output")
+        st.page_link(travel_route_page, label="2-4. 여행 루트 추천")
 
     st.divider()
     st.caption("실행 환경")
