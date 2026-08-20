@@ -4,8 +4,7 @@
 
 ## 목표
 
-`POST /api/travel/route-plan` 하나로:
-자연어 여행 요청 → LLM Structured Output(`TravelRoutePlan`) → 카카오 지오코딩으로 좌표 부착 → 프론트가 바로 지도에 찍을 수 있는 JSON 반환.
+기존 자연어 `POST /api/travel/route-plan` 계약을 유지하면서 출발지·도착지·기간·시간의 구조화 입력을 받고, 추천 뒤 교통편 질문은 조회 전용 ODsay/카카오모빌리티 Tool Use로 답한다. 외부 API 실패는 여행 카드나 전체 요청을 500으로 만들지 않는다.
 
 ## 설계
 
@@ -68,3 +67,69 @@
 - 테스트 16개 통과 (기존 14 + 신규 2), gemini 실호출 "여수 1박 2일" → 랜드마크 5 + 맛집 4, 카카오 지오코딩 9/9 성공
 - ⚠️ 발견한 Gemini quirk: `$defs` 객체 리스트가 2개 이상인 스키마에 리스트 `minItems/maxItems`가 있으면 400 INVALID_ARGUMENT.
   → `providers.py`의 `_gemini_safe_schema()`가 생성용 스키마에서만 minItems/maxItems를 제거 (개수 검증은 Pydantic이 응답 파싱 시 수행 — 계약 유지)
+
+## 2단계 구현 상태 — 입력 구조화 + 교통편 Tool Use (2026-08-20)
+
+### 입력·장소 보조 API
+
+| 파일 | 구현 상태 |
+| --- | --- |
+| `app/schemas.py` | `OriginPoint`, 구조화 필드를 포함한 `TravelRouteRequest`, `TravelSchedule`, `PlaceCandidate`, `ReverseGeocodeResult`, `CityItem`; `GeoPlace.kind="origin"`; `TravelRouteResult.origin/schedule` 구현 |
+| `app/data/cities.py` | 국내 25개 도시 이름과 중심 좌표 구현 |
+| `app/services/kakao_service.py` | 후보 검색·역지오코딩·기존 계획 지오코딩 재사용, 전부 fail-soft 구현 |
+| `app/routers/structured_router.py` | `/api/travel/cities`, `/places/search`, `/places/reverse`; 구조화 route 요청 합성, 날짜 계산, origin/schedule echo 구현 |
+| `app/providers.py` | mock 목적지 인식을 25개 도시로 확장, 기존 message 계약 유지 |
+
+구조화 route 입력은 `destination + start_date + end_date`가 한 묶음이며 `message`를 추가 요청으로 함께 보낼 수 있다. 날짜 차이와 29박 30일 상한은 서버가 검증하고, LLM에는 `<request>` 구분자로 합성문을 전달한다.
+
+### 교통 Tool Use
+
+| 파일 | 구현 상태 |
+| --- | --- |
+| `app/schemas.py` | LLM 노출용 `TransitRoutePreference`/`DrivingRoutePreference`와 실행용 좌표 포함 Args를 분리 |
+| `app/tools/definitions.py` | `get_transit_route`, `get_driving_route` 정의; LLM 스키마에 좌표를 노출하지 않음 |
+| `app/tools/transport_tools.py` | 2개 함수만 허용하는 `TOOLS` allowlist와 `run_tool()` 구현 |
+| `app/services/odsay_service.py` | 도시간 기차·버스·항공 정규화, mode 필터, type별 시간순 상위 3개, KTX/SRT 등 열차 코드 라벨 구현 |
+| `app/services/kakao_mobility_service.py` | 현재/미래 길찾기, 거리·시간·톨비·유류비·합계 정규화 구현 |
+| `app/providers.py` | mock/openai/gemini Tool 선택 구현, ollama 미지원 명시, 교통 질문 Tool 선택 instruction 구현 |
+| `app/routers/transport_router.py` | `/api/tools`, `/api/tools/run`, `/api/travel/transport`; 안전 실행·body 좌표 강제 주입·trace·최종 답변 구현 |
+| `app/config.py`, `.env.example` | `ODSAY_KEY`, 연비·유가 기본값 설정 구현; `.env.example`에 키 이름만 유지 |
+
+좌표·출발 시각은 LLM의 기존 제안 인자에서 제거한 뒤 `TravelTransportRequest` body 값으로 덮어쓴다. allowlist 확인과 좌표 포함 Args 검증을 통과한 Tool만 실행한다. 모든 Tool은 조회 전용이며 예약·결제를 하지 않는다.
+
+### 2.5 실스모크 결함 보완
+
+- LLM 노출 스키마에서 필수 좌표를 제거해 교통편 질문만으로도 Tool을 선택할 수 있게 했다.
+- openai/gemini 선택 instruction에 교통편 질문이면 Tool 하나를 호출하고 선호값만 채우도록 명시했다.
+- ODsay `trainType` 코드 `8`을 SRT로 표시하고 기존 출발역 휴리스틱을 제거했다.
+- Tool 미선택 안내를 `tool_choice="none"`과 일반 선택 실패로 구분했다.
+- Gemini 실검증에서 “고속버스로 가면 얼마야?”가 `get_transit_route`, `mode="bus"`를 선택하고 실행한 것을 확인했다.
+
+## 최종 검증 (2026-08-20)
+
+### 자동 테스트
+
+```bash
+cd mini_agent_02_structured_output/backend
+../.venv/bin/python -m pytest -q
+```
+
+- 결과: `25 passed in 9.18s`
+- 기존 16개 회귀와 구조화 입력·장소 보조·ODsay/Kakao 정규화·allowlist·인자 검증·좌표 덮어쓰기 테스트를 모두 포함한다.
+- 테스트의 외부 HTTP는 monkeypatch이며, 아래 실스모크와 증거 범위를 구분한다.
+
+### 실키 curl 스모크
+
+프로젝트 `.env`의 `LLM_PROVIDER=mock`, `KAKAO_REST_KEY`, `ODSAY_KEY` 설정을 사용해 로컬 uvicorn `127.0.0.1:8000`에 실제 curl로 호출했다. 실키 값은 출력·문서·커밋에 포함하지 않았다.
+
+| 호출 | 결과 |
+| --- | --- |
+| `GET /api/travel/cities` | 200, 국내 도시 25개 |
+| `GET /api/travel/places/search?query=서울역` | 200, 후보 5개; 첫 후보 `서울역`, `서울 중구 한강대로 405` |
+| `GET /api/travel/places/reverse?lat=37.5547&lng=126.9707` | 200, `서울특별시 용산구 남영동`, region `서울특별시` |
+| `POST /api/travel/route-plan` 구조화 mock | 200, 부산 2박 3일, `schedule` 2박/3일, 서울역 `origin`, 장소 5/5 지오코딩 |
+| `GET /api/tools` | 200, 조회 전용 Tool 2개, LLM input schema에 좌표 없음 |
+| `POST /api/travel/transport` “KTX로 가면?” | 200, `get_transit_route`, `mode=train`; SRT 130분 52,200원, KTX 138분 59,800원 등 ODsay 실결과 |
+| `POST /api/travel/transport` “차로 가면?” | 200, `get_driving_route`; 408.7km/311분, 톨 22,000원, 유류비 56,198원, 합계 78,198원 |
+
+두 교통 응답 모두 `tool_selection → argument_injection → tool_result → final_answer` trace와 request body 좌표·출발 시각 주입을 포함했다. 실스모크 종료 후 uvicorn 프로세스를 종료했다. 축약한 실제 JSON은 `frontend/plan.md`의 endpoint 계약에 기록했다.
