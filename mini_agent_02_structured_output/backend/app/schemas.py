@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -148,6 +148,33 @@ class OriginPoint(BaseModel):
     name: str = ""
 
 
+class TransitRouteArgs(BaseModel):
+    """LLM이 제안하되 백엔드가 좌표와 출발 시각을 확정하는 대중교통 인자."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin_lat: float
+    origin_lng: float
+    dest_lat: float
+    dest_lng: float
+    departure_time: datetime | None = None
+    mode: Literal["all", "train", "bus", "air"] = "all"
+
+
+class DrivingRouteArgs(BaseModel):
+    """자가용 길찾기와 유류비 계산에 필요한 검증된 인자."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin_lat: float
+    origin_lng: float
+    dest_lat: float
+    dest_lng: float
+    departure_time: datetime | None = None
+    fuel_efficiency_kmpl: float = Field(default=12.0, gt=0, le=40)
+    fuel_price_per_liter: int = Field(default=1650, gt=0, le=5000)
+
+
 class TravelRouteRequest(BaseModel):
     provider: ProviderName | None = None
     # 기존 자연어 한 줄 요청도 계속 받는다.
@@ -206,6 +233,47 @@ class TravelRouteResult(BaseModel):
     latency_ms: int
     origin: GeoPlace | None = None
     schedule: TravelSchedule | None = None
+
+
+class ToolRunRequest(BaseModel):
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolRunResult(BaseModel):
+    success: bool
+    tool_name: str
+    data: Any | None = None
+    error: dict[str, Any] | None = None
+
+
+class ToolSelectionResult(BaseModel):
+    provider: ProviderName
+    model: str
+    tool_name: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    reason: str
+    confidence: float = Field(ge=0, le=1)
+    latency_ms: int = 0
+    raw_tool_call: dict[str, Any] | None = None
+
+
+class TravelTransportRequest(BaseModel):
+    provider: ProviderName | None = None
+    message: str = Field(min_length=1, max_length=4000)
+    origin: OriginPoint
+    destination: OriginPoint
+    departure_time: datetime | None = None
+    tool_choice: Literal["auto", "none", "required"] = "auto"
+
+
+class ToolCompleteResult(BaseModel):
+    provider: ProviderName
+    question: str
+    decision: ToolSelectionResult
+    tool_result: ToolRunResult | None = None
+    final_answer: str
+    trace: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PlaceCandidate(BaseModel):

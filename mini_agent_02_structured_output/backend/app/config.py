@@ -25,6 +25,9 @@ class Settings:
     ).rstrip("/")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     kakao_rest_key: str = os.getenv("KAKAO_REST_KEY", "")
+    odsay_key: str = os.getenv("ODSAY_KEY", "")
+    fuel_efficiency_kmpl: float = float(os.getenv("FUEL_EFFICIENCY_KMPL", "12.0"))
+    fuel_price_per_liter: int = int(os.getenv("FUEL_PRICE_PER_LITER", "1650"))
     request_timeout_seconds: float = float(
         os.getenv("REQUEST_TIMEOUT_SECONDS", "60")
     )

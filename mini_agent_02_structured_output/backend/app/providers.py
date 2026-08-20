@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
@@ -8,6 +9,7 @@ from app.schemas import (
     FoodItem, LandmarkItem, StructuredSchemaName, SupportTicket, TravelPlan,
     TravelRoutePlan,
 )
+from app.tools.definitions import get_tool_definitions
 
 
 @dataclass
@@ -16,6 +18,18 @@ class ProviderResult:
     model: str
     content: str | dict[str, Any]
     latency_ms: int
+
+
+@dataclass
+class ToolDecision:
+    provider: str
+    model: str
+    tool_name: str | None
+    arguments: dict[str, Any]
+    reason: str
+    confidence: float
+    latency_ms: int
+    raw_tool_call: dict[str, Any] | None = None
 
 
 def generate_mock(system_prompt: str, message: str) -> ProviderResult:
@@ -86,6 +100,33 @@ def generate_structured_mock(
     return ProviderResult("mock", "deterministic-travel-mock", plan.model_dump(), 0)
 
 
+def select_tool_mock(message: str, tool_choice: str = "auto") -> ToolDecision:
+    driving_words = ("차", "자가용", "운전", "렌트", "주유")
+    transit_words = ("기차", "ktx", "srt", "버스", "대중교통", "항공", "비행기")
+    lower = message.lower()
+    if any(word in lower for word in driving_words):
+        name, arguments, reason, confidence = (
+            "get_driving_route", {}, "자가용 이동 요청", 0.95
+        )
+    else:
+        mode = (
+            "train" if any(word in lower for word in ("기차", "ktx", "srt"))
+            else "bus" if "버스" in lower
+            else "air" if any(word in lower for word in ("항공", "비행기"))
+            else "all"
+        )
+        name, arguments = "get_transit_route", {"mode": mode}
+        matched = any(word in lower for word in transit_words)
+        reason, confidence = (
+            ("대중교통 이동 요청", 0.95) if matched
+            else ("기본 대중교통 비교", 0.5)
+        )
+    return ToolDecision(
+        "mock", "deterministic-transport-mock", name, arguments,
+        reason, confidence, 0, {"name": name, "arguments": arguments},
+    )
+
+
 def generate_openai(system_prompt: str, message: str) -> ProviderResult:
     if not settings.openai_api_key:
         raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
@@ -99,6 +140,36 @@ def generate_openai(system_prompt: str, message: str) -> ProviderResult:
     return ProviderResult(
         "openai", settings.openai_model, response.output_text,
         round((perf_counter() - started) * 1000),
+    )
+
+
+def select_tool_openai(message: str, tool_choice: str = "auto") -> ToolDecision:
+    if not settings.openai_api_key:
+        raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
+    from openai import OpenAI
+
+    tools = [
+        {
+            "type": "function", "name": tool["name"],
+            "description": tool["description"], "parameters": tool["input_schema"],
+        }
+        for tool in get_tool_definitions()
+    ]
+    started = perf_counter()
+    response = OpenAI(api_key=settings.openai_api_key).responses.create(
+        model=settings.openai_model,
+        instructions="필요한 교통 조회 Tool 하나와 선호값만 선택하세요.",
+        input=message, tools=tools, tool_choice=tool_choice,
+    )
+    call = next(
+        (item for item in response.output if item.type == "function_call"), None
+    )
+    arguments = json.loads(call.arguments) if call else {}
+    return ToolDecision(
+        "openai", settings.openai_model, call.name if call else None, arguments,
+        "OpenAI Tool Calling 결과", 0.9 if call else 0.4,
+        round((perf_counter() - started) * 1000),
+        {"name": call.name, "arguments": call.arguments} if call else None,
     )
 
 
@@ -137,6 +208,34 @@ def generate_gemini(system_prompt: str, message: str) -> ProviderResult:
     return ProviderResult(
         "gemini", settings.gemini_model, response.text or "",
         round((perf_counter() - started) * 1000),
+    )
+
+
+def select_tool_gemini(message: str, tool_choice: str = "auto") -> ToolDecision:
+    client, types = _gemini_client()
+    declarations = [
+        types.FunctionDeclaration(
+            name=tool["name"], description=tool["description"],
+            parameters_json_schema=tool["input_schema"],
+        )
+        for tool in get_tool_definitions()
+    ]
+    prefix = "반드시 교통 조회 Tool 하나를 선택하세요. " if tool_choice == "required" else ""
+    started = perf_counter()
+    response = client.models.generate_content(
+        model=settings.gemini_model, contents=prefix + message,
+        config=types.GenerateContentConfig(
+            tools=[types.Tool(function_declarations=declarations)]
+        ),
+    )
+    calls = response.function_calls or []
+    call = calls[0] if calls else None
+    arguments = dict(call.args) if call else {}
+    return ToolDecision(
+        "gemini", settings.gemini_model, call.name if call else None, arguments,
+        "Gemini Function Calling 결과", 0.9 if call else 0.4,
+        round((perf_counter() - started) * 1000),
+        {"name": call.name, "arguments": arguments} if call else None,
     )
 
 
@@ -262,6 +361,23 @@ def generate_structured(
     if provider not in handlers:
         raise ValueError(f"지원하지 않는 Provider입니다: {provider}")
     return handlers[provider](system_prompt, message, schema_type)
+
+
+def select_tool(provider: str, message: str, tool_choice: str = "auto") -> ToolDecision:
+    if tool_choice == "none":
+        return ToolDecision(
+            provider, "tool-choice-none", None, {}, "Tool 사용 금지", 1.0, 0
+        )
+    if provider == "ollama":
+        raise ValueError("ollama는 Tool 선택 미지원")
+    handlers = {
+        "mock": select_tool_mock,
+        "gemini": select_tool_gemini,
+        "openai": select_tool_openai,
+    }
+    if provider not in handlers:
+        raise ValueError(f"지원하지 않는 Provider입니다: {provider}")
+    return handlers[provider](message, tool_choice)
 
 
 def provider_status() -> list[dict]:
