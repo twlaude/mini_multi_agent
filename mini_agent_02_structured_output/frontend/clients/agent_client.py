@@ -19,6 +19,13 @@ def classify_travel(message: str):
     return request("POST", "/api/travel/classify", json={"message": message})
 
 
+def create_travel_route_plan(message: str, provider: str | None = None):
+    payload = {"message": message}
+    if provider:
+        payload["provider"] = provider
+    return request("POST", "/api/travel/route-plan", json=payload)
+
+
 def generate_response(provider: str, system_prompt: str, message: str):
     return request("POST", "/api/generate", json={"provider": provider, "system_prompt": system_prompt, "message": message})
 
