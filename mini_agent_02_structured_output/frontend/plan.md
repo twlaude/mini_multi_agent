@@ -1,5 +1,7 @@
 # plan.md — 여행 루트 추천 Frontend 2단계 구현 계약서 (2-4)
 
+> 백엔드(twmoon)는 프론트 파일을 수정하지 않는다. 이 문서가 계약이다.
+
 > 마스터 문서: `../TRAVEL_ROUTE_MASTER.md`
 > 백엔드 구현 기록: `../backend/plan.md`
 > 대상 페이지: `app_pages/12_travel_route.py`
@@ -602,7 +604,7 @@ def complete_travel_transport(
 
 | 파일 | 현재 상태 | 구현 PR에서 할 일 |
 | --- | --- | --- |
-| `frontend/app_pages/12_travel_route.py` | 아직 없음 | 이 문서의 3택 입력, 카드, 지도, 교통 질문, trace를 완성 |
+| `frontend/app_pages/12_travel_route.py` | 팀원 로컬에 1차 버전 있음(PR #1 누락 — main push 필요). 아래 수정 가이드대로 확장 | 이 문서의 3택 입력, 카드, 지도, 교통 질문, trace를 완성 |
 | `frontend/components/kakao_map.py` | landmark/food 지도 구현됨 | origin 마커와 좌표표 연동 추가, 기존 안전 직렬화·polyline 유지 |
 | `frontend/clients/agent_client.py` | 기존 message 방식 함수 있음 | §11 endpoint 함수 추가, 기존 함수 유지 |
 | `frontend/core/api_client.py` | JSON body만 지원 | `params` 선택 인자 추가 |
@@ -689,3 +691,184 @@ cd mini_agent_02_structured_output/frontend
 ## 16. 문서 상태
 
 이 문서는 팀원이 작성한 기존 자연어 요청·카드·카카오맵·`not_found`·안전 직렬화 계약을 유지하고, 2단계의 구조화 입력·출발지 3택·교통 Tool Use 계약을 합친 최종 구현 기준이다. 백엔드 URL과 JSON 필드는 현재 구현 및 2026-08-20 실스모크 응답을 기준으로 확정했다.
+
+## 17. 12_travel_route.py 수정 가이드 (팀원 1차 버전 기준)
+
+팀원 로컬 186줄 파일을 연 뒤 아래 순서대로 바꾼다. 기존 `_render_day`, `_render_landmark`, `_render_food`는 그대로 재사용한다.
+
+### 17.1 API 클라이언트와 import
+
+**현재** (`12_travel_route.py` 3~9행, `clients/agent_client.py` 22~26행)
+```python
+from typing import Any
+from clients.agent_client import create_travel_route_plan
+def create_travel_route_plan(message: str, provider: str | None = None):
+    payload = {"message": message}
+```
+→ **변경** (`core/api_client.request`에도 `params=None`을 추가하고 `httpx.request(..., params=params)`로 전달)
+```python
+# clients/agent_client.py
+def get_travel_cities() -> dict:
+    return request("GET", "/api/travel/cities")
+def search_travel_places(query: str, size: int = 5) -> dict:
+    return request("GET", "/api/travel/places/search", params={"query": query, "size": size})
+def reverse_travel_place(lat: float, lng: float) -> dict:
+    return request("GET", "/api/travel/places/reverse", params={"lat": lat, "lng": lng})
+def create_travel_route_plan(message: str = "", provider: str | None = None, *,
+    origin: dict[str, object] | None = None, destination: str | None = None,
+    start_date: str | None = None, end_date: str | None = None,
+    start_time: str | None = None, end_time: str | None = None) -> dict:
+    payload = {"message": message} if message else {}
+    for key, value in {"provider": provider, "origin": origin, "destination": destination,
+        "start_date": start_date, "end_date": end_date, "start_time": start_time,
+        "end_time": end_time}.items():
+        if value is not None: payload[key] = value
+    return request("POST", "/api/travel/route-plan", json=payload)
+def ask_travel_transport(message: str, origin: dict[str, object],
+    destination: dict[str, object], departure_time: str | None = None,
+    provider: str | None = None) -> dict:
+    payload = {"message": message, "origin": origin, "destination": destination, "tool_choice": "auto"}
+    if departure_time: payload["departure_time"] = departure_time
+    if provider: payload["provider"] = provider
+    return request("POST", "/api/travel/transport", json=payload)
+```
+페이지 import에는 `from datetime import date, datetime, time, timedelta`, `from streamlit_js_eval import get_geolocation`과 위 5개 함수를 넣는다. 이유: GET query와 구조화 body를 한 클라이언트 계층에서 보내면서 기존 `create_travel_route_plan(message, provider)` 호출도 유지한다.
+실스모크 요청/응답 JSON(§10.1~10.3 그대로):
+```json
+{}
+{"cities":[{"name":"서울","lat":37.5663,"lng":126.9779},{"name":"부산","lat":35.1797,"lng":129.075},{"name":"제주","lat":33.4996,"lng":126.5312},{"name":"서귀포","lat":33.2541,"lng":126.5601}]}
+{"query":"서울역","size":5}
+{"query":"서울역","candidates":[{"name":"서울역","address":"서울 중구 한강대로 405","lat":37.55406888733184,"lng":126.97070335253385,"category":"교통,수송 > 기차,철도 > 기차역 > KTX,SRT정차역"}],"note":""}
+{"lat":37.5547,"lng":126.9707}
+{"lat":37.5547,"lng":126.9707,"address":"서울특별시 용산구 남영동","region":"서울특별시","note":""}
+```
+
+### 17.2 입력 블록과 호출부
+
+**현재** (`12_travel_route.py` 154~177행): 자유 `text_area`를 `normalized_message`로 만든 뒤 `create_travel_route_plan(normalized_message, provider)`를 호출한다.
+→ **변경** (143행 아래 입력부 전체 교체)
+```python
+if "travel-origin" not in st.session_state: st.session_state["travel-origin"] = None
+if "travel-candidates" not in st.session_state: st.session_state["travel-candidates"] = []
+cities = _items(get_travel_cities().get("cities"))
+origin_mode = st.radio("출발지 선택", ["브라우저 위치", "장소 검색", "도시 선택"], horizontal=True)
+if origin_mode == "브라우저 위치" and st.button("📍 현재 위치 가져오기"):
+    coords = (get_geolocation() or {}).get("coords") or {}
+    lat, lng = coords.get("latitude"), coords.get("longitude")
+    if lat is None or lng is None: st.warning("위치를 가져오지 못했어요. 다른 방식을 이용해 주세요.")
+    else:
+        reverse = reverse_travel_place(float(lat), float(lng))
+        st.session_state["travel-origin"] = {"name": reverse.get("address") or f"{lat:.4f},{lng:.4f}", "lat": float(lat), "lng": float(lng)}
+elif origin_mode == "장소 검색":
+    query = st.text_input("주소 또는 장소명")
+    if st.button("장소 검색") and query.strip():
+        found = search_travel_places(query.strip(), 5)
+        st.session_state["travel-candidates"] = _items(found.get("candidates"))
+        if not st.session_state["travel-candidates"]: st.info(found.get("note") or "검색 결과가 없습니다.")
+    candidates = st.session_state["travel-candidates"]
+    if candidates:
+        picked = st.radio("검색 후보", candidates, format_func=lambda x: f"{x['name']} · {x.get('address','')} · {x.get('category','')}")
+        if st.button("이 출발지로 확정"): st.session_state["travel-origin"] = {k: picked[k] for k in ("name", "lat", "lng")}
+else:
+    origin_city = st.selectbox("출발 도시", cities, format_func=lambda x: x["name"])
+    st.session_state["travel-origin"] = {k: origin_city[k] for k in ("name", "lat", "lng")}
+origin = st.session_state["travel-origin"]
+if origin: st.success(f"✅ {origin['name']} ({origin['lat']:.4f}, {origin['lng']:.4f})")
+destination = st.selectbox("도착 도시", cities, format_func=lambda x: x["name"])
+dates = st.date_input("여행 기간", value=(date.today() + timedelta(days=1), date.today() + timedelta(days=3)))
+start_time, end_time = st.time_input("출발 시간", time(9)), st.time_input("종료 시간", time(18))
+message = st.text_input("추가 요청", placeholder="바다와 시장 중심")
+selected_provider = st.selectbox("Provider", list(provider_options))
+if st.button("여행 루트 만들기", type="primary"):
+    if not origin or len(dates) != 2: st.warning("출발지와 시작·종료일을 확정해 주세요.")
+    elif dates[1] < dates[0] or (dates[1] - dates[0]).days > 29: st.warning("기간은 종료일이 늦고 최대 30일이어야 합니다.")
+    else:
+        response = create_travel_route_plan(message.strip(), provider_options[selected_provider], origin=origin,
+            destination=destination["name"], start_date=dates[0].isoformat(), end_date=dates[1].isoformat(),
+            start_time=start_time.isoformat(), end_time=end_time.isoformat())
+        st.session_state[RESULT_STATE_KEY], st.session_state["travel-context"] = response, {
+            "origin": origin, "destination": destination, "departure_time": datetime.combine(dates[0], start_time).isoformat(),
+            "provider": provider_options[selected_provider]}
+        st.session_state.pop("travel-transport-result", None)
+```
+이유: 출발지를 세 방식 중 하나로 확정하고 일정·시간·추가 요청을 별도 구조화 필드로 보낸다(`BackendAPIError`의 기존 `try/except`는 이 블록 주위에 유지).
+실스모크 요청/응답 JSON(§10.4의 핵심 필드 그대로):
+```json
+{"provider":"mock","origin":{"name":"서울역","lat":37.5547,"lng":126.9707},"destination":"부산","start_date":"2026-08-22","end_date":"2026-08-24","start_time":"09:00:00","end_time":"18:00:00","message":"바다와 시장 중심"}
+{"provider":"mock","model":"deterministic-travel-mock","plan":{"destination":"부산","nights":2,"days":3,"summary":"부산 핵심 명소와 맛집을 도는 교육용 2박 3일 루트입니다.","landmarks":[{"name":"부산역","summary":"여행의 시작점","category":"교통","day":1,"visit_order":1,"stay_minutes":30,"tip":"짐 보관소를 활용하세요."}],"foods":[{"name":"부산 전통시장 국밥","cuisine":"한식","signature_menu":"국밥","price_range":"1만원 이하","day":1,"meal_time":"점심","near_landmark":"부산역"}]},"places":[{"name":"부산역","kind":"landmark","day":1,"order":1,"lat":35.11520340622514,"lng":129.04154985192403,"address":"부산 동구 중앙대로 206"}],"not_found":[],"latency_ms":0,"origin":{"name":"서울역","kind":"origin","day":0,"order":0,"lat":37.5547,"lng":126.9707,"address":"서울역"},"schedule":{"destination":"부산","start_date":"2026-08-22","end_date":"2026-08-24","start_time":"09:00:00","end_time":"18:00:00","nights":2,"days":3}}
+```
+### 17.3 결과 요약과 origin 지도 마커
+
+**현재** (`_render_result` 100~105, 117~120, 138~140행): 기간은 `plan`만 읽고 `render_kakao_map(places)`에는 origin을 넣지 않는다. `kakao_map.normalize_places` 77행은 `{"landmark", "food"}`만 통과시킨다.
+→ **변경** (`_render_result`에서 기존 헬퍼와 탭은 유지)
+```python
+schedule = result.get("schedule") if isinstance(result.get("schedule"), dict) else {}
+days = min(max(_integer(schedule.get("days"), _integer(plan.get("days"), 1)), 1), 30)
+nights = max(_integer(schedule.get("nights"), _integer(plan.get("nights"), days - 1)), 0)
+destination_column.metric("목적지", _text(schedule.get("destination") or plan.get("destination")))
+duration_column.metric("여행 기간", f"{nights}박 {days}일")
+if schedule.get("start_time") and schedule.get("end_time"):
+    st.caption(f"선택 시간: {schedule['start_time']} ~ {schedule['end_time']}")
+map_places = ([result["origin"]] if isinstance(result.get("origin"), dict) else []) + places
+render_kakao_map(map_places)
+```
+```python
+# components/kakao_map.py
+if kind not in {"origin", "landmark", "food"} or not name: continue
+"day": max(_integer(item.get("day"), 0), 0),
+# _MAP_HTML에도 .origin { background: #16a34a; }와 범례를 추가한다.
+const color = kind === "origin" ? "#16a34a" : kind === "food" ? "#ef4444" : "#2563eb";
+const label = kind === "origin" ? "O" : kind === "food" ? "F" : "L";
+const typeLabel = place.kind === "origin" ? "출발지" : place.kind === "food" ? "음식점" : "랜드마크";
+```
+이유: 구조화 응답의 일정과 출발지를 보이되 origin은 기존 랜드마크 polyline에서 계속 제외한다. 사용 JSON은 바로 위 §17.2 응답의 `schedule`, `origin`, `places`와 동일하다.
+### 17.4 지도 아래 교통편 질문과 trace
+
+**현재** (`_render_result` 138~140행): `render_kakao_map(places)` 호출 뒤 함수가 끝난다.
+
+→ **변경** (`render_kakao_map(map_places)` 바로 아래)
+
+```python
+context = st.session_state.get("travel-context") or {}
+landmark = next((p for p in places if p.get("kind") == "landmark"), None)
+transport_destination = ({"name": landmark["name"], "lat": landmark["lat"], "lng": landmark["lng"]}
+    if landmark else context.get("destination"))
+if not context or not transport_destination: return
+st.subheader("교통편 질문")
+examples = st.columns(3)
+for column, example in zip(examples, ["KTX로 가면?", "고속버스로 가면?", "차로 가면?"]):
+    if column.button(example): st.session_state["travel-transport-question"] = example
+question = st.text_input("교통편 질문", placeholder="KTX로 가면?", key="travel-transport-question")
+if st.button("교통편 알아보기") and question.strip():
+    st.session_state["travel-transport-result"] = ask_travel_transport(question.strip(), context["origin"],
+        transport_destination, context["departure_time"], context.get("provider"))
+transport = st.session_state.get("travel-transport-result")
+if isinstance(transport, dict):
+    st.success(_text(transport.get("final_answer"), "교통편 답변이 없습니다."))
+    tool_result = transport.get("tool_result")
+    if not isinstance(tool_result, dict) or not tool_result.get("success"):
+        st.warning("교통 조회 Tool이 실행되지 않았거나 조회에 실패했습니다.")
+    with st.expander("Tool 실행 과정"):
+        labels = {"tool_selection": "1. Tool 선택", "argument_injection": "2. 서버 인자 주입·검증",
+            "tool_result": "3. 조회 실행", "final_answer": "4. 답변"}
+        details = {"tool_selection": transport.get("decision"), "argument_injection": (transport.get("decision") or {}).get("arguments"),
+            "tool_result": tool_result, "final_answer": transport.get("final_answer")}
+        for item in transport.get("trace") or []:
+            st.markdown(f"**{labels.get(item.get('stage'), item.get('stage'))}**")
+            st.json(item.get("data") or details.get(item.get("stage")) or {})
+        st.caption("좌표·출발 시각은 request body에서 서버가 강제 주입하며, 조회 전용이라 예약·결제하지 않습니다.")
+```
+이유: 첫 추천 랜드마크 좌표를 우선 목적지로 쓰고 없으면 선택 도시로 폴백하며, 수업 05/03의 4단계 trace와 fail-soft 실패를 그대로 보여준다.
+실스모크 요청/응답 JSON(§10.7 그대로):
+
+```json
+{"provider":"mock","message":"KTX로 가면?","origin":{"name":"서울역","lat":37.5547,"lng":126.9707},"destination":{"name":"해운대","lat":35.1631,"lng":129.1635},"departure_time":"2026-08-22T09:00:00","tool_choice":"auto"}
+{"provider":"mock","question":"KTX로 가면?","decision":{"provider":"mock","model":"deterministic-transport-mock","tool_name":"get_transit_route","arguments":{"mode":"train","origin_lat":37.5547,"origin_lng":126.9707,"dest_lat":35.1631,"dest_lng":129.1635,"departure_time":"2026-08-22T09:00:00"},"reason":"대중교통 이동 요청","confidence":0.95,"latency_ms":0},"tool_result":{"success":true,"tool_name":"get_transit_route","data":{"options":[{"type":"train","label":"SRT","from":"수서","to":"부산","minutes":130,"fare_krw":52200},{"type":"train","label":"KTX","from":"서울","to":"부산","minutes":138,"fare_krw":59800}],"note":"도시간 검색은 역/터미널 기준 — 역↔목적지 시내 이동은 별도","source":"odsay"},"error":null},"final_answer":"SRT 수서→부산 2시간 10분 52,200원 / KTX 서울→부산 2시간 18분 59,800원 / KTX 수서→부산 2시간 19분 52,900원","trace":[{"stage":"tool_selection","data":{}},{"stage":"argument_injection","data":{"source":"request_body"}},{"stage":"tool_result","data":{}},{"stage":"final_answer","data":{}}]}
+{"provider":"mock","message":"차로 가면?","origin":{"name":"서울역","lat":37.5547,"lng":126.9707},"destination":{"name":"해운대","lat":35.1631,"lng":129.1635},"departure_time":"2026-08-22T09:00:00","tool_choice":"auto"}
+{"decision":{"tool_name":"get_driving_route","arguments":{"origin_lat":37.5547,"origin_lng":126.9707,"dest_lat":35.1631,"dest_lng":129.1635,"departure_time":"2026-08-22T09:00:00","fuel_efficiency_kmpl":12.0,"fuel_price_per_liter":1650}},"tool_result":{"success":true,"tool_name":"get_driving_route","data":{"distance_km":408.7,"minutes":311,"toll_krw":22000,"fuel_krw":56198,"taxi_krw":378200,"total_krw":78198,"assumptions":{"fuel_efficiency_kmpl":12.0,"fuel_price_per_liter":1650},"source":"kakao_mobility"},"error":null},"final_answer":"자가용 약 311분, 408.7km, 톨비 22,000원과 예상 유류비 56,198원으로 합계 78,198원입니다."}
+```
+
+### 17.5 의존성
+
+**현재** (`requirements.txt`): `streamlit-js-eval`이 없다. → **변경**: 팀원이 기존 줄을 지우지 말고 `streamlit-js-eval` 한 줄을 추가한다.
+이유: 브라우저 위치 권한과 좌표를 Streamlit 백엔드로 전달하는 데 필요하다. 이 항목은 HTTP API 요청/응답이 없으며, 설치 후 GPS 결과가 있으면 §17.1의 reverse 실스모크 JSON 계약으로 처리한다.
