@@ -68,17 +68,18 @@ def normalize_places(places: Any) -> list[dict[str, Any]]:
         name = str(item.get("name", "")).strip()
         latitude = _number(item.get("lat"))
         longitude = _number(item.get("lng"))
-        if kind not in {"landmark", "food"} or not name:
+        if kind not in {"origin", "landmark", "food"} or not name:
             continue
         if latitude is None or not -90 <= latitude <= 90:
             continue
         if longitude is None or not -180 <= longitude <= 180:
             continue
+        minimum_day = 0 if kind == "origin" else 1
         normalized.append(
             {
                 "name": name,
                 "kind": kind,
-                "day": max(_integer(item.get("day"), 1), 1),
+                "day": max(_integer(item.get("day"), minimum_day), minimum_day),
                 "order": max(_integer(item.get("order"), 0), 0),
                 "lat": latitude,
                 "lng": longitude,
@@ -103,6 +104,7 @@ def render_kakao_map(places: Any, height: int = 560) -> None:
     valid_places = normalize_places(places)
     if not valid_places:
         st.info("지도에서 확인할 수 있는 좌표가 없습니다.")
+        _render_coordinate_table(valid_places)
         return
 
     app_key = get_kakao_js_key()
@@ -111,6 +113,7 @@ def render_kakao_map(places: Any, height: int = 560) -> None:
             "카카오 지도를 표시하려면 Streamlit Secrets 또는 .env에 "
             "KAKAO_JS_KEY를 설정해 주세요."
         )
+        _render_coordinate_table(valid_places)
         return
 
     places_json = _safe_json(valid_places)
@@ -120,6 +123,20 @@ def render_kakao_map(places: Any, height: int = 560) -> None:
         "__KAKAO_JS_KEY__", encoded_key
     )
     components.html(html_document, height=safe_height, scrolling=False)
+    _render_coordinate_table(valid_places)
+
+
+def _render_coordinate_table(places: list[dict[str, Any]]) -> None:
+    """지도 SDK 상태와 무관하게 검증된 좌표를 보여줍니다."""
+    columns = ("name", "kind", "day", "order", "address", "lat", "lng")
+    table_data = {
+        column: [place.get(column) for place in places] for column in columns
+    }
+    with st.expander("좌표로 보기"):
+        if places:
+            st.dataframe(table_data, hide_index=True, use_container_width=True)
+        else:
+            st.caption("표시할 수 있는 좌표가 없습니다.")
 
 
 _MAP_HTML = r"""
@@ -137,6 +154,7 @@ _MAP_HTML = r"""
     .legend { position: absolute; z-index: 10; top: 12px; left: 12px; padding: 9px 12px; border-radius: 10px; background: rgba(255,255,255,.94); box-shadow: 0 2px 8px rgba(15,23,42,.16); color: #334155; font-size: 12px; }
     .legend-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
     .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .origin { background: #16a34a; }
     .landmark { background: #2563eb; }
     .food { background: #ef4444; }
     .info { min-width: 180px; max-width: 260px; padding: 10px 12px; color: #1e293b; font-size: 12px; line-height: 1.45; }
@@ -147,6 +165,7 @@ _MAP_HTML = r"""
   <div id="map-wrap">
     <div id="map"></div>
     <div class="legend">
+      <div class="legend-row"><span class="dot origin"></span>출발지 마커</div>
       <div class="legend-row"><span class="dot landmark"></span>랜드마크·일차별 경로</div>
       <div class="legend-row"><span class="dot food"></span>음식점 마커</div>
     </div>
@@ -174,8 +193,8 @@ _MAP_HTML = r"""
     }
 
     function markerImage(kind) {
-      const color = kind === "food" ? "#ef4444" : "#2563eb";
-      const label = kind === "food" ? "F" : "L";
+      const color = kind === "origin" ? "#16a34a" : kind === "food" ? "#ef4444" : "#2563eb";
+      const label = kind === "origin" ? "O" : kind === "food" ? "F" : "L";
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44"><path fill="${color}" stroke="white" stroke-width="2" d="M17 1C8.2 1 1 8.2 1 17c0 12 16 26 16 26s16-14 16-26C33 8.2 25.8 1 17 1z"/><circle cx="17" cy="17" r="9" fill="white"/><text x="17" y="21" text-anchor="middle" font-family="Arial" font-size="11" font-weight="700" fill="${color}">${label}</text></svg>`;
       const source = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
       return new kakao.maps.MarkerImage(
@@ -210,11 +229,12 @@ _MAP_HTML = r"""
           });
           bounds.extend(position);
 
-          const typeLabel = place.kind === "food" ? "음식점" : "랜드마크";
+          const typeLabel = place.kind === "origin" ? "출발지" : place.kind === "food" ? "음식점" : "랜드마크";
+          const dayLabel = place.kind === "origin" ? "" : ` · ${place.day}일차`;
           const orderLabel = place.kind === "landmark" && place.order > 0
             ? ` · ${place.order}번째 방문`
             : "";
-          const content = `<div class="info"><strong>${escapeHtml(place.name)}</strong>${escapeHtml(typeLabel)} · ${escapeHtml(place.day)}일차${escapeHtml(orderLabel)}<br>${escapeHtml(place.address || "주소 정보 없음")}</div>`;
+          const content = `<div class="info"><strong>${escapeHtml(place.name)}</strong>${escapeHtml(typeLabel)}${escapeHtml(dayLabel)}${escapeHtml(orderLabel)}<br>${escapeHtml(place.address || "주소 정보 없음")}</div>`;
           const infoWindow = new kakao.maps.InfoWindow({ content, removable: true });
           kakao.maps.event.addListener(marker, "click", function () {
             if (openedInfoWindow) openedInfoWindow.close();
