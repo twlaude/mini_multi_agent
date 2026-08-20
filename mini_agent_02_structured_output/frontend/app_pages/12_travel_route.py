@@ -98,7 +98,7 @@ def _render_result(result: Any) -> None:
         return
 
     plan = result["plan"]
-    days = min(max(_integer(plan.get("days"), 1), 1), 14)
+    days = min(max(_integer(plan.get("days"), 1), 1), 30)
     nights = max(_integer(plan.get("nights"), max(days - 1, 0)), 0)
     landmarks = _items(plan.get("landmarks"))
     foods = _items(plan.get("foods"))

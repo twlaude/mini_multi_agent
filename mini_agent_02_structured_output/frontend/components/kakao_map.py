@@ -15,16 +15,10 @@ import streamlit.components.v1 as components
 
 
 def _load_local_environment() -> None:
-    """로컬 실행에서는 프로젝트의 .env를 읽고 배포 환경값은 덮어쓰지 않습니다."""
-    current_file = Path(__file__).resolve()
-    candidates = (
-        Path.cwd() / ".env",
-        current_file.parents[2] / ".env",
-        current_file.parents[3] / ".env",
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            load_dotenv(candidate, override=False)
+    """로컬 실행에서 현재 프로젝트의 .env만 읽습니다."""
+    project_environment = Path(__file__).resolve().parents[2] / ".env"
+    if project_environment.is_file():
+        load_dotenv(project_environment, override=False)
 
 
 _load_local_environment()
@@ -163,8 +157,7 @@ _MAP_HTML = r"""
     const places = JSON.parse(document.getElementById("places-data").textContent);
     const message = document.getElementById("message");
     const routeColors = ["#2563eb", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#be123c"];
-    const kakaoCoreFallbackVersion = "4.5.26";
-    let kakaoCoreTimer = null;
+    let kakaoLoadTimer = null;
 
     function showError(text) {
       message.textContent = text;
@@ -270,28 +263,28 @@ _MAP_HTML = r"""
         return;
       }
 
-      const version = kakao.maps.version || kakao.maps.VERSION || kakaoCoreFallbackVersion;
-      const core = document.createElement("script");
-      core.src = `https://t1.daumcdn.net/mapjsapi/js/main/${version}/kakao.js`;
-      core.async = true;
+      if (typeof kakao.maps.load !== "function") {
+        showError("카카오 지도 SDK 초기화 함수를 찾지 못했습니다.");
+        return;
+      }
 
-      kakaoCoreTimer = window.setTimeout(function () {
+      kakaoLoadTimer = window.setTimeout(function () {
         showError("카카오 지도 코어 로딩 시간이 초과되었습니다.");
       }, 8000);
 
-      core.onload = function () {
-        window.clearTimeout(kakaoCoreTimer);
-        if (typeof kakao.maps.Map !== "function") {
-          showError("카카오 지도 코어 초기화에 실패했습니다.");
-          return;
-        }
-        renderMap();
-      };
-      core.onerror = function () {
-        window.clearTimeout(kakaoCoreTimer);
-        showError("카카오 지도 코어 스크립트 로드에 실패했습니다.");
-      };
-      document.head.appendChild(core);
+      try {
+        kakao.maps.load(function () {
+          window.clearTimeout(kakaoLoadTimer);
+          if (typeof kakao.maps.Map !== "function") {
+            showError("카카오 지도 코어 초기화에 실패했습니다.");
+            return;
+          }
+          renderMap();
+        });
+      } catch (error) {
+        window.clearTimeout(kakaoLoadTimer);
+        showError("카카오 지도 코어를 초기화하지 못했습니다.");
+      }
     }
 
     const sdk = document.createElement("script");
