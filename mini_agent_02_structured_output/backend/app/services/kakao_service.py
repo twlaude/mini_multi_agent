@@ -1,5 +1,6 @@
 """카카오 로컬 키워드 검색으로 장소명을 좌표로 바꾼다 (여행 루트 지도용)."""
 
+import re
 from typing import Literal
 
 import httpx
@@ -100,19 +101,33 @@ def geocode_place(
     )
 
 
+BRANCH_SUFFIX = re.compile(r"\s*\S*점$")  # "남포동본점", "본점", "남천점" 같은 지점 접미사
+
+
+def _geocode_with_fallback(
+    destination: str, name: str, kind: Literal["landmark", "food"], day: int, order: int
+) -> GeoPlace | None:
+    """LLM이 지점명을 살짝 틀리는 일이 잦아(예: '신창국밥 남포동본점' vs 실제 '신창국밥 본점')
+    전체 이름으로 못 찾으면 지점 접미사를 떼고 딱 한 번 더 검색한다."""
+    place = geocode_place(f"{destination} {name}", name, kind, day, order)
+    if place:
+        return place
+    stripped = BRANCH_SUFFIX.sub("", name).strip()
+    if stripped and stripped != name:
+        return geocode_place(f"{destination} {stripped}", name, kind, day, order)
+    return None
+
+
 def geocode_plan(plan: TravelRoutePlan) -> tuple[list[GeoPlace], list[str]]:
     """계획의 모든 장소를 지오코딩한다. 실패한 곳은 not_found로 분리 (fail-soft)."""
     places: list[GeoPlace] = []
     not_found: list[str] = []
     for landmark in plan.landmarks:
-        place = geocode_place(
-            f"{plan.destination} {landmark.name}", landmark.name,
-            "landmark", landmark.day, landmark.visit_order,
+        place = _geocode_with_fallback(
+            plan.destination, landmark.name, "landmark", landmark.day, landmark.visit_order
         )
         places.append(place) if place else not_found.append(landmark.name)
     for food in plan.foods:
-        place = geocode_place(
-            f"{plan.destination} {food.name}", food.name, "food", food.day, 0
-        )
+        place = _geocode_with_fallback(plan.destination, food.name, "food", food.day, 0)
         places.append(place) if place else not_found.append(food.name)
     return places, not_found

@@ -433,3 +433,29 @@ def test_image_and_tts_routes_are_kept_from_unit_01(monkeypatch) -> None:
     audio = client.post("/api/media/tts", json={"text": "안내문", "voice": "coral"})
     assert image.status_code == 200
     assert audio.headers["x-synthetic-voice"] == "true"
+
+
+def test_geocode_plan_retries_without_branch_suffix(monkeypatch) -> None:
+    from app.schemas import FoodItem, GeoPlace, TravelRoutePlan
+    from app.services import kakao_service
+
+    queries: list[str] = []
+
+    def fake_geocode_place(query, name, kind, day, order):
+        queries.append(query)
+        if query == "부산 신창국밥":  # 접미사 뗀 두 번째 검색만 성공
+            return GeoPlace(name=name, kind=kind, day=day, order=order, lat=35.1, lng=129.0)
+        return None
+
+    monkeypatch.setattr(kakao_service, "geocode_place", fake_geocode_place)
+    plan = TravelRoutePlan(
+        destination="부산", nights=0, days=1, summary="국밥 여행",
+        landmarks=[{"name": "감천문화마을", "summary": "벽화", "category": "마을",
+                    "day": 1, "visit_order": 1, "stay_minutes": 60}],
+        foods=[FoodItem(name="신창국밥 남포동본점", cuisine="국밥", signature_menu="돼지국밥",
+                        price_range="1만원", day=1, meal_time="점심")],
+    )
+    places, not_found = kakao_service.geocode_plan(plan)
+    assert [p.name for p in places] == ["신창국밥 남포동본점"]
+    assert queries == ["부산 감천문화마을", "부산 신창국밥 남포동본점", "부산 신창국밥"]
+    assert not_found == ["감천문화마을"]  # 접미사 없는 이름은 재시도 안 함
