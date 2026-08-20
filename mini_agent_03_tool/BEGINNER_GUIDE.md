@@ -2,12 +2,21 @@
 
 ## 단위 예제
 
-1. `learning_unit/01_concept_example.py`
-2. `learning_unit/02_tool_schema_validation.py`
-3. `learning_unit/03_mock_tool_selection.py`
-4. `learning_unit/04_safe_tool_execution.py`
-5. `learning_unit/05_tool_result_to_answer.py`
-6. Backend 실행 후 `learning_unit/06_multi_provider_tool_calling.py`
+1. `learning_unit/00_tool_use_concepts.py`
+2. `learning_unit/01_tool_schema_validation.py`
+3. `learning_unit/02_mock_tool_selection.py`
+4. `learning_unit/03_mock_tool_loop.py`로 전체 Mock 흐름 확인
+5. Backend 실행 후 `learning_unit/04_current_vs_forecast_selection.py`
+6. `learning_unit/05_real_tool_call_inspection.py`와 `06_missing_arguments_and_clarification.py`
+7. `learning_unit/07_safe_tool_execution.py`
+8. Backend 실행 후 `learning_unit/08_real_tool_loop.py`
+9. `learning_unit/10_labs/01_parking_gate_tool.py`로 조회와 상태 변경 Tool 분리
+10. `learning_unit/10_labs/02_air_conditioner_workflow.py`로 규칙 기반 Workflow 확인
+11. `learning_unit/10_labs/03_parcel_locker_authorization.py`로 인증·만료·중복 실행 확인
+12. `learning_unit/10_labs/04_cafe_argument_extraction.py`로 arguments 추출과 재질문 확인
+13. `learning_unit/10_labs/05_library_multi_tool_rules.py`로 여러 Tool Result와 업무 규칙 확인
+14. `learning_unit/10_labs/06_inventory_reservation_concurrency.py`로 실행 직전 재검증 확인
+15. Provider 비교는 Streamlit의 `Tool 선택`과 `Agent Loop`에서 진행
 
 ```text
 함수 → Schema → Tool Call → Allowlist → Pydantic 검증

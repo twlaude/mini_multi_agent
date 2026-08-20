@@ -139,11 +139,26 @@ class TtsRequest(BaseModel):
     instructions: str = Field(default="한국어로 또렷하고 따뜻한 여행 가이드처럼 말하세요.", max_length=500)
 
 
-class WeatherArgs(BaseModel):
+class CurrentWeatherArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    city: str = Field(min_length=1)
+
+
+class WeatherForecastArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     city: str = Field(min_length=1)
     target_date: date
+
+    @model_validator(mode="after")
+    def validate_forecast_date(self) -> "WeatherForecastArgs":
+        today = date.today()
+        if self.target_date < today:
+            raise ValueError("예보 날짜는 오늘 이후여야 합니다.")
+        if (self.target_date - today).days > 16:
+            raise ValueError("예보 날짜는 오늘부터 16일 이내여야 합니다.")
+        return self
 
 
 class HotelArgs(BaseModel):
@@ -170,6 +185,7 @@ class AttractionArgs(BaseModel):
 
 class ToolSelectRequest(MessageRequest):
     provider: ProviderName | None = None
+    tool_choice: Literal["auto", "none", "required"] = "auto"
 
 
 class ToolSelectionResult(BaseModel):
@@ -180,10 +196,15 @@ class ToolSelectionResult(BaseModel):
     reason: str
     confidence: float = Field(ge=0, le=1)
     latency_ms: int = 0
+    missing_arguments: list[str] = Field(default_factory=list)
+    needs_clarification: bool = False
+    follow_up_question: str = ""
+    raw_tool_call: dict[str, Any] | None = None
 
 
 class ToolCompareRequest(MessageRequest):
     providers: list[ProviderName] = Field(default_factory=lambda: ["mock"], min_length=1, max_length=4)
+    tool_choice: Literal["auto", "none", "required"] = "auto"
 
 
 class ToolComparisonItem(BaseModel):
@@ -220,3 +241,4 @@ class ToolCompleteResult(BaseModel):
     decision: ToolSelectionResult
     tool_result: ToolRunResult | None = None
     final_answer: str
+    trace: list[dict[str, Any]] = Field(default_factory=list)

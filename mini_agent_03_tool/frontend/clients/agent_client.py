@@ -58,13 +58,13 @@ def get_tools():
     return request("GET", "/api/tools")
 
 
-def select_tool(provider: str, message: str):
-    payload = {"provider": provider, "message": message}
+def select_tool(provider: str, message: str, tool_choice: str = "auto"):
+    payload = {"provider": provider, "message": message, "tool_choice": tool_choice}
     return request("POST", "/api/tools/select", json=payload)
 
 
-def compare_tools(providers: list[str], message: str):
-    payload = {"providers": providers, "message": message}
+def compare_tools(providers: list[str], message: str, tool_choice: str = "auto"):
+    payload = {"providers": providers, "message": message, "tool_choice": tool_choice}
     return request("POST", "/api/tools/compare", json=payload)
 
 
@@ -73,8 +73,8 @@ def run_tool(tool_name: str, arguments: dict[str, Any]):
     return request("POST", "/api/tools/run", json=payload)
 
 
-def complete_tool_loop(provider: str, message: str):
-    payload = {"provider": provider, "message": message}
+def complete_tool_loop(provider: str, message: str, tool_choice: str = "auto"):
+    payload = {"provider": provider, "message": message, "tool_choice": tool_choice}
     return request("POST", "/api/tools/complete", json=payload)
 
 

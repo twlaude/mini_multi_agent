@@ -11,14 +11,15 @@ st.title("🛡️ Tool 검증과 실행")
 st.caption("Backend가 Allowlist와 Pydantic Schema를 통과한 조회 함수만 실행합니다.")
 
 decision = st.session_state.get("tool_decision", {})
-allowed = ["get_weather", "search_hotels", "search_attractions"]
-default_tool = decision.get("tool_name") if decision.get("tool_name") in allowed else "get_weather"
+allowed = ["get_current_weather", "get_weather_forecast", "search_hotels", "search_attractions"]
+default_tool = decision.get("tool_name") if decision.get("tool_name") in allowed else "get_current_weather"
 tool_name = st.selectbox("Tool 이름", allowed + ["delete_database (차단 실습)"], index=allowed.index(default_tool))
 tool_name = "delete_database" if tool_name.startswith("delete_database") else tool_name
 
 today = date.today()
 sample_arguments = {
-    "get_weather": {"city": "부산", "target_date": today.isoformat()},
+    "get_current_weather": {"city": "부산"},
+    "get_weather_forecast": {"city": "부산", "target_date": (today + timedelta(days=1)).isoformat()},
     "search_hotels": {
         "city": "부산",
         "check_in": today.isoformat(),

@@ -2,5 +2,6 @@
 
 
 def select_tool(message: str) -> str | None:
-    # TODO: 날씨 표현이면 get_weather, 숙소 표현이면 search_hotels를 반환하세요.
+    # TODO: 현재 날씨는 get_current_weather, 미래 예보는
+    # get_weather_forecast, 숙소는 search_hotels를 반환하세요.
     return None

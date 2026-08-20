@@ -1,10 +1,14 @@
-"""TODO 1: WeatherArgs와 HotelArgs의 검증 조건을 완성하세요."""
+"""TODO 1: 현재 날씨·미래 예보·숙소 arguments 계약을 완성하세요."""
 
 from datetime import date
 from pydantic import BaseModel, Field
 
 
-class WeatherArgs(BaseModel):
+class CurrentWeatherArgs(BaseModel):
+    city: str = Field(min_length=1)
+
+
+class WeatherForecastArgs(BaseModel):
     city: str = Field(min_length=1)
     target_date: date
 

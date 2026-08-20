@@ -21,7 +21,7 @@ from app.schemas import (
 from app.services.concept_service import compare_decisions
 from app.services.prompt_service import build_prompt
 from app.services.travel_classifier import classify_travel_request
-from app.tools.definitions import TRAVEL_TOOL_DEFINITIONS
+from app.tools.definitions import get_tool_definitions
 from app.tools.travel_tools import run_tool
 
 
@@ -131,14 +131,14 @@ def text_to_speech(payload: TtsRequest) -> Response:
 
 @agent_router.get("/api/tools")
 def tools() -> dict:
-    return {"tools": TRAVEL_TOOL_DEFINITIONS, "note": "모든 Tool은 조회용 Mock이며 실제 예약이나 결제를 실행하지 않습니다."}
+    return {"tools": get_tool_definitions(), "note": "모든 Tool은 조회 전용이며 예약이나 결제를 실행하지 않습니다."}
 
 
 @agent_router.post("/api/tools/select", response_model=ToolSelectionResult)
 def choose_tool(payload: ToolSelectRequest) -> ToolSelectionResult:
     selected = payload.provider or settings.llm_provider
     try:
-        return ToolSelectionResult.model_validate(asdict(select_tool(selected, payload.message)))
+        return ToolSelectionResult.model_validate(asdict(select_tool(selected, payload.message, payload.tool_choice)))
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
@@ -150,7 +150,7 @@ def compare_tool_selection(payload: ToolCompareRequest) -> ToolCompareResult:
     items: list[ToolComparisonItem] = []
     for selected in payload.providers:
         try:
-            decision = ToolSelectionResult.model_validate(asdict(select_tool(selected, payload.message)))
+            decision = ToolSelectionResult.model_validate(asdict(select_tool(selected, payload.message, payload.tool_choice)))
             items.append(ToolComparisonItem(provider=selected, status="success", decision=decision))
         except Exception as error:
             items.append(ToolComparisonItem(provider=selected, status="error", error=str(error)))
@@ -178,17 +178,30 @@ def _run_tool_safely(tool_name: str, arguments: dict) -> ToolRunResult:
 def complete_tool_loop(payload: ToolCompleteRequest) -> ToolCompleteResult:
     selected = payload.provider or settings.llm_provider
     try:
-        decision = ToolSelectionResult.model_validate(asdict(select_tool(selected, payload.message)))
+        decision = ToolSelectionResult.model_validate(asdict(select_tool(selected, payload.message, payload.tool_choice)))
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=502, detail=f"{selected} Tool 선택 실패: {error}") from error
 
+    trace = [{"stage": "tool_selection", "data": decision.model_dump(mode="json")}]
+    if decision.needs_clarification:
+        trace.append({
+            "stage": "clarification",
+            "data": {
+                "missing_arguments": decision.missing_arguments,
+                "follow_up_question": decision.follow_up_question,
+            },
+        })
+        return ToolCompleteResult(provider=selected, question=payload.message, decision=decision, final_answer=decision.follow_up_question, trace=trace)
+
     if decision.tool_name is None:
         final_answer = "이 질문에는 실행할 조회 Tool이 필요하지 않습니다."
-        return ToolCompleteResult(provider=selected, question=payload.message, decision=decision, final_answer=final_answer)
+        trace.append({"stage": "finish", "data": {"reason": "no_tool"}})
+        return ToolCompleteResult(provider=selected, question=payload.message, decision=decision, final_answer=final_answer, trace=trace)
 
     tool_result = _run_tool_safely(decision.tool_name, decision.arguments)
+    trace.append({"stage": "tool_result", "data": tool_result.model_dump(mode="json")})
     if not tool_result.success:
         return ToolCompleteResult(
             provider=selected,
@@ -196,6 +209,7 @@ def complete_tool_loop(payload: ToolCompleteRequest) -> ToolCompleteResult:
             decision=decision,
             tool_result=tool_result,
             final_answer="Tool을 안전하게 실행하지 못했습니다. 입력과 권한을 확인해 주세요.",
+            trace=trace,
         )
 
     if selected == "mock":
@@ -218,4 +232,5 @@ def complete_tool_loop(payload: ToolCompleteRequest) -> ToolCompleteResult:
         decision=decision,
         tool_result=tool_result,
         final_answer=final_answer,
+        trace=trace + [{"stage": "final_answer", "data": {"text": final_answer}}],
     )
