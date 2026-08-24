@@ -1,4 +1,4 @@
-"""모든 페이지에서 공통으로 사용하는 HTTP 요청 기능 (응답 봉투 {"success","message","data"} 약속)."""
+"""모든 Agent 메뉴에서 공통으로 사용하는 HTTP 요청 기능."""
 
 import os
 from typing import Any
@@ -6,8 +6,7 @@ from typing import Any
 import httpx
 
 
-# 성엽 컴 백엔드 주소. .env 또는 환경변수 BACKEND_URL 로 주입 (예: http://192.100.200.197:8000)
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+BACKEND_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 REQUEST_TIMEOUT = 70.0
 
 
@@ -43,3 +42,42 @@ def request(
         return response.json()
     except ValueError as error:
         raise BackendAPIError("백엔드가 올바른 JSON을 반환하지 않았습니다.") from error
+
+
+def upload_image(filename: str, content: bytes, content_type: str, question: str) -> Any:
+    try:
+        response = httpx.post(
+            f"{BACKEND_URL}/api/media/image-analysis",
+            files={"image": (filename, content, content_type)},
+            data={"question": question},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as error:
+        try:
+            detail = error.response.json().get("detail", str(error))
+        except ValueError:
+            detail = str(error)
+        raise BackendAPIError(detail) from error
+    except httpx.RequestError as error:
+        raise BackendAPIError("백엔드 서버에 연결할 수 없습니다.") from error
+
+
+def request_audio(text: str, voice: str, instructions: str) -> bytes:
+    try:
+        response = httpx.post(
+            f"{BACKEND_URL}/api/media/tts",
+            json={"text": text, "voice": voice, "instructions": instructions},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.content
+    except httpx.HTTPStatusError as error:
+        try:
+            detail = error.response.json().get("detail", str(error))
+        except ValueError:
+            detail = str(error)
+        raise BackendAPIError(detail) from error
+    except httpx.RequestError as error:
+        raise BackendAPIError("백엔드 서버에 연결할 수 없습니다.") from error
