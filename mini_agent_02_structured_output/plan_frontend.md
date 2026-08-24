@@ -16,10 +16,10 @@
 ```
 
 - **기능 3개** (두 버전 각각): ① 외부인 차량 조회 ② 이상 시간대 출차 → 음주 체크 ③ 꼬리물기 탐지
-- **작업 위치**: 이 repo의 `mini_agent_02_structured_output/frontend/` — 수업 뼈대 패턴(`app_pages(탭) → clients → core/api_client.py` 봉투 파싱) 그대로 새로 구성
+- **작업 위치**: 이 repo의 `mini_agent_02_structured_output/frontend/` — 기존 뼈대(`app.py` 내비게이션 + `app_pages → clients → core/api_client.py`) **위에서 개조**. 주차 페이지 3개를 app_pages에 추가하고 app.py 내비에 등록, 여행 페이지들은 참고 후 제거 가능. 백엔드 주소 env 변수명은 뼈대 코드 그대로 **`BACKEND_API_URL`**
 - **응답 봉투**: `{"success", "message", "data"}`
 - **백엔드 API 계약**: plan_backend.md 2절 표가 SSOT — 카메라는 인식한 **번호 문자열만** `POST /parking/{mode}/gate`로 쏘면 끝 (비전 결과를 DB에 직접 쓰지 않음)
-- **배포 방식: git 없음 + 역할별 분산 호스팅** — 같은 네트워크에서 각자 담당만 자기 컴에 띄우고 서로 IP로 접속 (태웅=DB:5435 / 성엽=백엔드:8000 / 오현님=프론트+Ollama:11434+카메라). 프론트·카메라의 백엔드 주소는 `http://<성엽IP>:8000` (.env `BACKEND_URL`로 주입, 하드코딩 금지)
+- **배포 방식: git 없음 + 역할별 분산 호스팅** — 같은 네트워크에서 각자 담당만 자기 컴에 띄우고 서로 IP로 접속 (태웅=DB:5435 / 성엽=백엔드:8000 / 오현님=프론트+Ollama:11434+카메라). 프론트·카메라의 백엔드 주소는 `http://<성엽IP>:8000` (.env `BACKEND_API_URL`로 주입 — 뼈대 api_client.py가 읽는 이름. 하드코딩 금지)
 - **Ollama는 성엽 백엔드가 원격 호출** — 도커 `-p 11434:11434`는 이미 전체 인터페이스 바인딩이라 그대로 두면 되고, OS 방화벽이 11434 인바운드를 막지 않는지만 확인. 계약(경로·포트) 임의 변경 금지
 - ⚠️ 와이파이가 기기 간 통신 막으면(클라이언트 격리) 폰 핫스팟 하나에 셋 다 붙는 걸로 폴백
 
