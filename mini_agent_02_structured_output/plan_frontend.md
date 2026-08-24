@@ -25,13 +25,9 @@
 
 ## 1. Ollama (도커)
 
-```bash
-docker run -d --name parking-ollama -p 11434:11434 -v ollama:/root/.ollama ollama/ollama
-docker exec parking-ollama ollama pull qwen3:4b
-```
-
-- ⚠️ 맥에서 도커는 GPU(Metal)를 못 써서 CPU 추론임 → **4b급 이하 모델 권장**. 느리면 `qwen3:1.7b`로 낮추거나, 시연 전에 워밍업 호출 한 번.
-- 검증: `curl localhost:11434/v1/models` 200 뜨면 끝. 성엽한테 모델명 공유.
+- **모델 `llama3.2` 확정** (2026-08-24 현장 결정 — 이미 설치돼 있음, tool calling 지원). 새로 받을 것 없음
+- Ollama가 외부(성엽 백엔드)에서 접속돼야 함: 설치판이면 `OLLAMA_HOST=0.0.0.0` 환경변수 + 재시작, 방화벽 11434 인바운드 허용
+- 검증: `curl localhost:11434/v1/models` 200 + 성엽 컴에서 `curl http://<오현님IP>:11434/v1/models` 200. 시연 전에 워밍업 호출 한 번 (첫 호출은 모델 로드 때문에 느림)
 
 ## 2. 카메라 번호인식 (camera_reader.py — Streamlit 밖 단독 스크립트)
 

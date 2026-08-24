@@ -19,7 +19,7 @@
 - **작업 위치**: 이 repo의 `mini_agent_02_structured_output/backend/` — 수업 뼈대 패턴(`app/domains/<도메인>/router.py + service.py + schemas.py` 계층) 그대로 새로 구성
 - **응답 봉투**: `{"success": bool, "message": str, "data": ...}` 유지
 - **DB**: `postgresql://parking:parking@<태웅IP>:5435/parking` (.env `PARKING_DSN`으로 주입) — supabase 클라이언트 대신 **psycopg** 직접 사용 (`app/core/db.py` 하나 만들어서 connection 헬퍼)
-- **Ollama**: `http://<오현님IP>:11434/v1/chat/completions` (OpenAI 호환, .env `OLLAMA_URL`로 주입) — 오현님 컴의 도커에서 돌고 백엔드가 원격 호출. 모델 기본 `qwen3:4b`. 스키마는 plan_db.md가 SSOT.
+- **Ollama**: `http://<오현님IP>:11434/v1/chat/completions` (OpenAI 호환, .env `OLLAMA_URL`로 주입) — 오현님 컴에서 돌고 백엔드가 원격 호출. **모델 `llama3.2` 확정** (2026-08-24 현장 결정 — 오현님 컴에 이미 설치돼 있고 tool calling 지원). 스키마는 plan_db.md가 SSOT.
 - **배포 방식: git 없음 + 역할별 분산 호스팅** — 같은 네트워크에서 각자 담당만 자기 컴에 띄우고 서로 IP로 접속 (태웅=DB:5435 / 성엽=백엔드:8000 / 오현님=프론트+Ollama:11434+카메라). **백엔드는 반드시 `uvicorn app.main:app --host 0.0.0.0 --port 8000`** — 오현님이 원격으로 붙어야 하니 127.0.0.1 바인딩 금지. IP들은 .env로 주입, 계약(경로·포트·스키마) 임의 변경 금지
 - ⚠️ 와이파이가 기기 간 통신 막으면 폰 핫스팟 폴백. OS 방화벽 8000 인바운드 허용 필요할 수 있음
 
