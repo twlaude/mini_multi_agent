@@ -19,7 +19,7 @@
   1. **외부인 차량 조회** — 지금 주차장에 있는 미등록/방문 차량 목록
   2. **이상 시간대 출차 → 음주 체크** — 평소 출차 시간대와 다른 새벽/심야 출차면 (가짜) 음주측정 요청, 통과해야 게이트 오픈
   3. **꼬리물기 탐지** — 각 주차면에 번호인식 장치가 있다고 가정. 자리에서 관측됐는데 게이트 입차 기록이 없는 번호 = 꼬리물기
-- **작업 위치**: 이 repo의 `mini_agent_02_structured_output/` — `backend/`(FastAPI)와 `frontend/`(Streamlit)를 새로 구성. 구조 패턴은 수업 뼈대 그대로: 백엔드 `app/routers(또는 domains) → services → schemas` 계층, 프론트 `app_pages → clients → core/api_client`
+- **작업 위치**: 이 repo의 `mini_agent_02_structured_output/` — 기존 `backend/`(FastAPI)와 `frontend/`(Streamlit) 뼈대 **위에서 개조**. 계층 구조(백엔드 `app/routers → services → schemas`, 프론트 `app_pages → clients → core/api_client`)는 유지하고, 여행루트 도메인 파일들은 참고하거나 지우고 주차 도메인으로 교체
 - **응답 봉투**: `{"success": bool, "message": str, "data": ...}` (기존 api_client.py 약속 유지)
 - **DB 접속 (백엔드가 쓸 DSN)**: `postgresql://parking:parking@<태웅IP>:5435/parking`
   (태웅 본인 컴에서만 `localhost:5435`. :5434는 다른 컨테이너가 써서 :5435로 비킴)

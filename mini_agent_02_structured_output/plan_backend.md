@@ -16,7 +16,7 @@
 ```
 
 - **기능 3개** (두 버전 각각 구현): ① 외부인 차량 조회 ② 이상 시간대 출차 → 음주 체크 ③ 꼬리물기 탐지
-- **작업 위치**: 이 repo의 `mini_agent_02_structured_output/backend/` — 수업 뼈대 패턴(`app/domains/<도메인>/router.py + service.py + schemas.py` 계층) 그대로 새로 구성
+- **작업 위치**: 이 repo의 `mini_agent_02_structured_output/backend/` — 기존 뼈대(main.py 라우터 등록, config, error 처리) **위에서 개조**. 주차 도메인은 `app/domains/<도메인>/router.py + service.py + schemas.py` 계층으로 추가하고, 여행루트 라우터/서비스는 참고 후 제거 가능
 - **응답 봉투**: `{"success": bool, "message": str, "data": ...}` 유지
 - **DB**: `postgresql://parking:parking@<태웅IP>:5435/parking` (.env `PARKING_DSN`으로 주입) — supabase 클라이언트 대신 **psycopg** 직접 사용 (`app/core/db.py` 하나 만들어서 connection 헬퍼)
 - **Ollama**: `http://<오현님IP>:11434/v1/chat/completions` (OpenAI 호환, .env `OLLAMA_URL`로 주입) — 오현님 컴에서 돌고 백엔드가 원격 호출. **모델 `llama3.2` 확정** (2026-08-24 현장 결정 — 오현님 컴에 이미 설치돼 있고 tool calling 지원). 스키마는 plan_db.md가 SSOT.
