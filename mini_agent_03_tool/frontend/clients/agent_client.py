@@ -58,14 +58,9 @@ def get_tools():
     return request("GET", "/api/tools")
 
 
-def select_tool(provider: str, message: str, tool_choice: str = "auto"):
-    payload = {"provider": provider, "message": message, "tool_choice": tool_choice}
+def select_tool(message: str, tool_choice: str = "auto"):
+    payload = {"message": message, "tool_choice": tool_choice}
     return request("POST", "/api/tools/select", json=payload)
-
-
-def compare_tools(providers: list[str], message: str, tool_choice: str = "auto"):
-    payload = {"providers": providers, "message": message, "tool_choice": tool_choice}
-    return request("POST", "/api/tools/compare", json=payload)
 
 
 def run_tool(tool_name: str, arguments: dict[str, Any]):
@@ -73,9 +68,18 @@ def run_tool(tool_name: str, arguments: dict[str, Any]):
     return request("POST", "/api/tools/run", json=payload)
 
 
-def complete_tool_loop(provider: str, message: str, tool_choice: str = "auto"):
-    payload = {"provider": provider, "message": message, "tool_choice": tool_choice}
+def complete_tool_loop(message: str, tool_choice: str = "auto"):
+    payload = {"message": message, "tool_choice": tool_choice}
     return request("POST", "/api/tools/complete", json=payload)
+
+
+def run_lab(message: str, session_id: str, lab_id: str, arguments: dict[str, Any], confirmed: bool = False, action_id: str | None = None):
+    payload = {"message": message, "session_id": session_id, "lab_id": lab_id, "arguments": arguments, "confirmed": confirmed, "action_id": action_id}
+    return request("POST", "/api/labs/run", json=payload)
+
+
+def reset_labs():
+    return request("POST", "/api/labs/reset", json={})
 
 
 def upload_image(filename: str, content: bytes, content_type: str, question: str):

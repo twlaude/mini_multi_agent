@@ -1,4 +1,5 @@
-# Streamlit Cloud 프론트엔드용 (메인 파일: mini_agent_01_llm/frontend/app.py)
+# Streamlit Cloud 프론트엔드용 — 클라우드는 레포 루트의 이 파일을 읽는다 (mini_agent_01/02 공통). 줄 삭제 금지, 추가만.
 streamlit
 httpx
 pillow
+python-dotenv
