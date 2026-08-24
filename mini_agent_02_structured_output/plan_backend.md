@@ -18,10 +18,10 @@
 - **기능 3개** (두 버전 각각 구현): ① 외부인 차량 조회 ② 이상 시간대 출차 → 음주 체크 ③ 꼬리물기 탐지
 - **작업 위치**: 이 repo의 `mini_agent_02_structured_output/backend/` — 수업 뼈대 패턴(`app/domains/<도메인>/router.py + service.py + schemas.py` 계층) 그대로 새로 구성
 - **응답 봉투**: `{"success": bool, "message": str, "data": ...}` 유지
-- **DB**: `postgresql://parking:parking@localhost:5435/parking` — supabase 클라이언트 대신 **psycopg** 직접 사용 (`app/core/db.py` 하나 만들어서 connection 헬퍼)
-- **Ollama**: `http://localhost:11434/v1/chat/completions` (OpenAI 호환), 모델은 오현님이 띄우는 것 사용 (기본 `qwen3:4b`). 스키마는 plan_db.md가 SSOT.
-- **공유 방식: git 없음** — 산출물은 파일로 전달(카톡/USB 등)하고, **각자 자기 컴에서 전체 스택을 로컬로 띄운다** (배포 없음, 전부 localhost). 그래서 폴더/파일명·포트·API 경로는 이 plan의 계약에서 **절대 임의 변경 금지** — 남의 산출물을 그대로 복사해 넣으면 돌아가야 함
-- **각자 컴 조립 순서**: ① docker PG + schema/seed → ② Ollama → ③ 백엔드 `uvicorn` → ④ 프론트 `streamlit run`
+- **DB**: `postgresql://parking:parking@<태웅IP>:5435/parking` (.env `PARKING_DSN`으로 주입) — supabase 클라이언트 대신 **psycopg** 직접 사용 (`app/core/db.py` 하나 만들어서 connection 헬퍼)
+- **Ollama**: `http://<오현님IP>:11434/v1/chat/completions` (OpenAI 호환, .env `OLLAMA_URL`로 주입) — 오현님 컴의 도커에서 돌고 백엔드가 원격 호출. 모델 기본 `qwen3:4b`. 스키마는 plan_db.md가 SSOT.
+- **배포 방식: git 없음 + 역할별 분산 호스팅** — 같은 네트워크에서 각자 담당만 자기 컴에 띄우고 서로 IP로 접속 (태웅=DB:5435 / 성엽=백엔드:8000 / 오현님=프론트+Ollama:11434+카메라). **백엔드는 반드시 `uvicorn app.main:app --host 0.0.0.0 --port 8000`** — 오현님이 원격으로 붙어야 하니 127.0.0.1 바인딩 금지. IP들은 .env로 주입, 계약(경로·포트·스키마) 임의 변경 금지
+- ⚠️ 와이파이가 기기 간 통신 막으면 폰 핫스팟 폴백. OS 방화벽 8000 인바운드 허용 필요할 수 있음
 
 ## 1. 도메인 구조 (두 버전을 도메인으로 분리 — 데모 때 나란히 비교)
 

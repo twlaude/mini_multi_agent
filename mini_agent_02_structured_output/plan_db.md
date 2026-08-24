@@ -21,11 +21,15 @@
   3. **꼬리물기 탐지** — 각 주차면에 번호인식 장치가 있다고 가정. 자리에서 관측됐는데 게이트 입차 기록이 없는 번호 = 꼬리물기
 - **작업 위치**: 이 repo의 `mini_agent_02_structured_output/` — `backend/`(FastAPI)와 `frontend/`(Streamlit)를 새로 구성. 구조 패턴은 수업 뼈대 그대로: 백엔드 `app/routers(또는 domains) → services → schemas` 계층, 프론트 `app_pages → clients → core/api_client`
 - **응답 봉투**: `{"success": bool, "message": str, "data": ...}` (기존 api_client.py 약속 유지)
-- **DB 접속 (백엔드가 쓸 DSN)**: `postgresql://parking:parking@localhost:5435/parking`
-  (lostfound가 :5434 쓰고 있어서 :5435로 비킴)
+- **DB 접속 (백엔드가 쓸 DSN)**: `postgresql://parking:parking@<태웅IP>:5435/parking`
+  (태웅 본인 컴에서만 `localhost:5435`. :5434는 다른 컨테이너가 써서 :5435로 비킴)
 - ⚠️ 뼈대는 supabase 클라이언트인데 이번엔 로컬 PG니까 백엔드는 **psycopg**로 접속 (plan_backend.md 참조)
-- **공유 방식: git 없음** — 산출물은 파일로 전달(카톡/USB 등)하고, **각자 자기 컴에서 전체 스택을 로컬로 띄운다** (배포 없음, 전부 localhost). 그래서 폴더/파일명·포트·API 경로는 이 plan의 계약에서 **절대 임의 변경 금지** — 남의 산출물을 그대로 복사해 넣으면 돌아가야 함
-- **각자 컴 조립 순서**: ① docker PG 기동 + schema.sql + seed.py (태웅 산출물) → ② Ollama 컨테이너 + 모델 pull (오현님 산출물) → ③ 백엔드 `uvicorn` 기동 (성엽 산출물) → ④ 프론트 `streamlit run` (오현님 산출물). 각 산출물엔 실행 명령 한 줄이 README 주석으로 포함돼야 함
+- **배포 방식: git 없음 + 역할별 분산 호스팅** — 같은 네트워크(교실 와이파이 또는 핫스팟)에서 **각자 자기 담당만 자기 컴에 띄우고 서로 IP로 접속**:
+  · 태웅 컴 = **DB** (docker PG :5435) ← 성엽 백엔드가 원격 접속
+  · 성엽 컴 = **백엔드** (uvicorn `--host 0.0.0.0 --port 8000`) ← 오현님 프론트·카메라가 원격 접속
+  · 오현님 컴 = **프론트**(streamlit) + **Ollama**(docker :11434) + 카메라 ← Ollama는 성엽 백엔드가 원격 호출
+- **IP 교환이 첫 일**: 각자 자기 IP 확인(맥 `ipconfig getifaddr en0` / 윈도우 `ipconfig`)해서 디코에 공유. IP·포트는 코드에 하드코딩 말고 **.env**로 (와이파이 바뀌면 IP 바뀜). API 경로·포트·스키마 계약은 임의 변경 금지
+- ⚠️ 교실 공용 와이파이가 기기 간 통신을 막으면(클라이언트 격리) 폰 핫스팟 하나에 셋 다 붙는 걸로 폴백. 각자 OS 방화벽에서 해당 포트 인바운드 허용 필요할 수 있음
 
 ## 1. 목표
 Docker PG 컨테이너 + 스키마 + 가짜 데이터 시딩까지. 백엔드가 DSN만 받아서 바로 쿼리할 수 있는 상태가 산출물.
