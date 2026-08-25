@@ -1,5 +1,7 @@
 # 공통 Docker 환경
 
+> **태웅 맥북 메모 (2026-08-25)**: 맥북엔 이미 공용 컨테이너 `pg`(pgvector, :5432 — DB `agent_db`/`parking`/`lostfound`), `ollama`(:11434 — llama3.1:8b, llama3.2), `redis`(:6379)가 있다. 아래 `docker compose up`은 **실행하지 말고** `docker start pg ollama redis`로 켠다. 새 프로젝트는 컨테이너를 새로 만들지 않고 `docker exec pg psql -U parking -c "create database <이름>"`로 DB만 추가.
+
 모든 누적 단계가 같은 Ollama, PostgreSQL/pgvector, Redis 컨테이너를 사용합니다. 단계마다 컨테이너를 새로 만들지 않습니다.
 
 ## 시작
@@ -20,7 +22,7 @@ docker exec mini-agent-ollama ollama pull embeddinggemma
 | 서비스 | 주소 |
 | --- | --- |
 | Ollama | `http://127.0.0.1:11434` |
-| PostgreSQL/pgvector | `127.0.0.1:5433` |
+| PostgreSQL/pgvector | `127.0.0.1:5432` |
 | Redis | `redis://127.0.0.1:6379/0` |
 
 첫 단계는 Ollama만 사용합니다. PostgreSQL/pgvector는 Mini Agent 04, Redis는 Mini Agent 05부터 본격적으로 연결합니다.
