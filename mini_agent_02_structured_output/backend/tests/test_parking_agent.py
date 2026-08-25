@@ -26,7 +26,7 @@ def test_gate_single_schema_call_uses_prefetched_facts(monkeypatch) -> None:
             "content": '{"decision":"open","reason":"평소 시간대 출차"}',
         }}]})
 
-    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 등록 차량", None))
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 등록 차량", {"abnormal": False, "recent_check": None}))
     monkeypatch.setattr(agent_service, "_guard_sobriety_consistency", lambda d, c: d)
     monkeypatch.setattr(agent_service, "_record_gate", lambda *args: None)
     result = agent_service.run_agent(
@@ -57,7 +57,7 @@ def test_http_failure_retries_once_then_workflow_fallback(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(workflow_service, "evaluate_gate", fallback)
-    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", None))
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", {"abnormal": True, "recent_check": None}))
     monkeypatch.setattr(
         agent_service, "_record_gate",
         lambda payload, decision, at: recorded.append((payload, decision, at)),
@@ -252,7 +252,7 @@ def test_hold_without_tool_call_creates_check_in_code(monkeypatch) -> None:
             "content": '{"decision":"hold","reason":"심야 출차","check_id":null}',
         }}]})
 
-    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", None))
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", {"abnormal": True, "recent_check": None}))
     monkeypatch.setitem(
         TOOL_FUNCTIONS, "request_sobriety_check",
         lambda plate, at=None: {"check_id": 99, "plate": plate, "status": "pending"},
@@ -273,7 +273,7 @@ def test_abnormal_exit_flag_overrides_open_to_hold(monkeypatch) -> None:
             "content": '{"abnormal_exit": true, "decision": "open", "reason": "심야 출차"}',
         }}]})
 
-    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", None))
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", {"abnormal": True, "recent_check": None}))
     monkeypatch.setitem(
         TOOL_FUNCTIONS, "request_sobriety_check",
         lambda plate, at=None: {"check_id": 77, "plate": plate, "status": "pending"},
@@ -286,3 +286,20 @@ def test_abnormal_exit_flag_overrides_open_to_hold(monkeypatch) -> None:
     )
     assert result.decision == "hold" and result.check_id == 77
     assert result.reason.startswith("심야 출차")
+
+
+def test_facts_win_when_model_misreads_conditions(monkeypatch) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {
+            "role": "assistant",
+            "content": '{"abnormal_exit": true, "decision": "hold", "reason": "조건 중 하나라도 예"}',
+        }}]})
+
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", {"abnormal": False, "recent_check": None}))
+    monkeypatch.setattr(agent_service, "_guard_sobriety_consistency", lambda d, c: d)
+    monkeypatch.setattr(agent_service, "_record_gate", lambda *args: None)
+    result = agent_service.run_agent(
+        AgentGateRequest(plate="00테0001", direction="exit", at=datetime(2026, 8, 25, 19)),
+        transport=httpx.MockTransport(handler),
+    )
+    assert result.decision == "open" and result.check_id is None

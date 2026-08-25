@@ -139,7 +139,8 @@ def _agent_gate(
     transport: httpx.BaseTransport | None,
 ) -> AgentGateDecision:
     """조회는 코드(_facts_for), 판단은 라마(스키마 강제 1콜), 실행(측정 요청·정합성)은 코드."""
-    facts, recent_check = _facts_for(payload.plate, when)
+    facts, flags = _facts_for(payload.plate, when)
+    recent_check = flags.get("recent_check")
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": (
@@ -162,6 +163,14 @@ def _agent_gate(
     data["mode"] = "agent"
     check_id = recent_check["id"] if recent_check else None
     abnormal = bool(raw.get("abnormal_exit")) and payload.direction == "exit"
+    facts_abnormal = bool(flags.get("abnormal")) and payload.direction == "exit"
+    if abnormal != facts_abnormal:
+        # 라마가 사전 조사의 예/아니오를 거꾸로 읽은 경우(소형 모델) → 사실이 이긴다
+        logger.warning("abnormal_exit 라마=%s vs 사실=%s → 사실로 보정 (%s)", abnormal, facts_abnormal, payload.plate)
+        abnormal = facts_abnormal
+        if not abnormal and data["decision"] == "hold" and not recent_check:
+            data["decision"] = "open"
+            data["reason"] = "평소 시간대 정상 출차 (조건A·B 모두 해당 없음)"
     if abnormal and data["decision"] == "open" and (recent_check or {}).get("status") != "pass":
         # 라마가 '이상 출차'라고 판단해 놓고 open이라 쓴 경우(3B가 조건 결합을 자주 놓침)
         # → 라마의 판단(이상)을 집행: 측정 대기. 사유 문장은 라마 것 유지
@@ -258,6 +267,7 @@ def _guard_sobriety_consistency(
 def _facts_for(plate: str, when: datetime) -> tuple[str, dict[str, Any] | None]:
     """라마가 툴을 여러 번 돌지 않아도 되게 핵심 사실을 미리 한국어로 정리한다.
     (조회는 코드가 하고, 판단은 라마가 한다). 최근 1시간 음주측정 row도 같이 돌려준다."""
+    facts_flags: dict[str, Any] = {}
     vehicle = TOOL_FUNCTIONS["lookup_vehicle"](plate)
     history = TOOL_FUNCTIONS["get_exit_history"](plate, when)
     hours = [e["hour_kst"] for e in history["exits"]]
@@ -283,6 +293,7 @@ def _facts_for(plate: str, when: datetime) -> tuple[str, dict[str, Any] | None]:
         f"\n- 조건A (평소보다 2시간 넘게 어긋남, 이력 5건 이상일 때만): {yn(cond_a)}"
         f"\n- 조건B (심야 00~05시 출차): {yn(late_night)}"
     )
+    facts_flags["abnormal"] = bool(cond_a or late_night)
     with get_conn() as conn:
         check = conn.execute(
             """select id, status from sobriety_checks
@@ -295,7 +306,8 @@ def _facts_for(plate: str, when: datetime) -> tuple[str, dict[str, Any] | None]:
         if check else "최근 1시간 음주측정 요청 없음"
     )
     facts = f"- {reg}\n- {hist}\n- 현재 KST {when.hour:02d}시 {when.minute:02d}분\n- {check_text}"
-    return facts, (dict(check) if check else None)
+    facts_flags["recent_check"] = dict(check) if check else None
+    return facts, facts_flags
 
 
 def _record_gate(
