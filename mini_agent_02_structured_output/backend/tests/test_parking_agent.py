@@ -180,3 +180,34 @@ def test_real_endpoint_connection_failure_falls_back_and_records_agent(
             conn.execute("delete from sobriety_checks where plate = %s", (plate,))
             conn.execute("delete from spot_events where plate = %s", (plate,))
             conn.execute("delete from gate_events where plate = %s", (plate,))
+
+
+def test_bad_tool_args_are_fed_back_instead_of_raising(monkeypatch) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        body = json.loads(request.content)
+        if calls == 1:  # 소형 모델이 enum 밖 인자를 줌
+            return httpx.Response(200, json={"choices": [{"message": {
+                "role": "assistant", "content": None, "tool_calls": [{
+                    "id": "c1", "type": "function", "function": {
+                        "name": "create_alert",
+                        "arguments": '{"type":"exit","plate":"12가3456","detail":"x"}',
+                    },
+                }],
+            }}]})
+        tool_message = body["messages"][-1]
+        assert tool_message["role"] == "tool" and "error" in tool_message["content"]
+        return httpx.Response(200, json={"choices": [{"message": {
+            "role": "assistant",
+            "content": '{"decision":"open","reason":"정상","check_id":null}',
+        }}]})
+
+    monkeypatch.setattr(agent_service, "_record_gate", lambda *args: None)
+    result = agent_service.run_agent(
+        AgentGateRequest(plate="12가3456", direction="exit", at=datetime(2026, 8, 25, 19)),
+        transport=httpx.MockTransport(handler),
+    )
+    assert result.decision == "open" and calls == 2

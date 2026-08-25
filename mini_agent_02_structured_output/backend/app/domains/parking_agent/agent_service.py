@@ -1,8 +1,11 @@
 import json
+import logging
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 import httpx
+
+logger = logging.getLogger("parking.agent")
 from app.config import settings
 from app.core.db import get_conn
 from app.domains.parking_agent.schemas import AgentGateDecision, AgentGateRequest
@@ -13,8 +16,9 @@ SYSTEM_PROMPT = """너는 주차장 관제 에이전트다. 반드시 툴로 조
 출차 이력이 5건 미만이면 open한다. 그 외에는 평소 시각의 ±2시간 밖이거나
 현재 KST가 00~05시면 이상 출차다. 이상 출차는 request_sobriety_check를 호출한다.
 최근 1시간 check가 pass면 open, fail이면 deny하고 drunk_suspect alert를 만들며,
-pending이면 hold한다. 최종 답은 설명 없이
-{"decision":"open|deny|hold","reason":"근거","check_id":숫자 또는 null} JSON만 쓴다."""
+pending이면 hold한다. 툴 결과에 error가 있으면 인자를 고쳐 다시 호출한다.
+최종 답은 설명 없이
+{"decision":"open|deny|hold","reason":"근거(반드시 한국어)","check_id":숫자 또는 null} JSON만 쓴다."""
 VISITOR_SQL = """with last_gate as (
  select distinct on (plate) plate,direction,decision,created_at from gate_events
  order by plate,created_at desc,id desc)
@@ -84,7 +88,15 @@ def _tool_loop(
                 "create_alert",
             }:
                 args["at"] = when
-            result = TOOL_FUNCTIONS[name](**args)
+            # 소형 모델은 툴 이름/인자를 틀리기도 한다 → 예외로 죽이지 말고
+            # error를 툴 결과로 돌려줘서 다음 턴에 스스로 고치게 한다
+            try:
+                if name not in TOOL_FUNCTIONS:
+                    raise ValueError(f"없는 툴: {name}")
+                result = TOOL_FUNCTIONS[name](**args)
+            except Exception as error:
+                logger.warning("tool %s(%s) 실패: %s", name, args, error)
+                result = {"error": str(error), "hint": "인자를 고쳐 다시 호출하라"}
             names.append(name)
             if name == "request_sobriety_check":
                 check_id = result.get("check_id")
@@ -144,11 +156,12 @@ def run_agent(
     payload: AgentGateRequest, transport: httpx.BaseTransport | None = None,
 ) -> AgentGateDecision:
     when = _kst(payload.at)
-    for _ in range(2):
+    for attempt in range(2):
         try:
             decision = _agent_gate(payload, when, transport)
             break
-        except Exception:
+        except Exception as error:
+            logger.warning("agent gate %d회차 실패: %s", attempt + 1, error)
             decision = None
     if decision is None:
         decision = _workflow_fallback(payload, when)
@@ -180,8 +193,8 @@ def agent_note(
         content = (content.get("content") or "").strip()
         if content:
             return " ".join(content.splitlines())[:300]
-    except Exception:
-        pass
+    except Exception as error:
+        logger.warning("agent_note(%s) 실패: %s", kind, error)
     return f"(에이전트 응답 없음) {kind} 차량 {len(rows)}대를 확인했습니다."
 def ask_agent(
     question: str, transport: httpx.BaseTransport | None = None,
@@ -191,16 +204,19 @@ def ask_agent(
         "visitors": list_visitors(), "tailgating": list_tailgating(),
     }
     messages = [
-        {"role": "system", "content": "주차장 관제 질문에 툴 결과만 근거로 답하라."},
+        {"role": "system", "content": (
+            "너는 주차장 관제 에이전트다. 주차장 관제 질문에 아래 현재 조회와 툴 결과만 "
+            "근거로 한국어로 답하라. 툴 결과에 error가 있으면 인자를 고쳐 다시 호출한다."
+        )},
         {"role": "user", "content": (
             f"현재 KST={when.isoformat()}\n현재 조회={json.dumps(parking_context, default=str, ensure_ascii=False)}"
             f"\n질문={question}"
         )},
     ]
-    for _ in range(2):
+    for attempt in range(2):
         try:
             answer, names, _ = _tool_loop(messages.copy(), when, transport)
             return {"answer": answer, "tool_calls": names}
-        except Exception:
-            pass
+        except Exception as error:
+            logger.warning("ask_agent %d회차 실패: %s", attempt + 1, error)
     return {"answer": "Ollama 연결 실패로 답변하지 못했습니다.", "tool_calls": []}
