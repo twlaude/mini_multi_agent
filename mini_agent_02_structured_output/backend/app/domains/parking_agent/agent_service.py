@@ -146,8 +146,8 @@ def _agent_gate(
             f"차량={payload.plate}, 방향={payload.direction}, "
             f"요청시각(KST)={when.isoformat()}\n"
             f"[사전 조사 결과]\n{facts}\n"
-            "먼저 abnormal_exit를 판단하라: 방향이 exit이고 ('평소보다 2시간 넘게 어긋남' 또는 "
-            "'심야(00~05시) 여부: 예')이면 true, 입차이거나 정상 시간대면 false. "
+            "먼저 abnormal_exit를 판단하라: 방향이 exit이고 조건A 또는 조건B 중 하나라도 '예'이면 true. "
+            "방향이 enter이거나 조건A·조건B가 둘 다 '아니오'면 false. 사전 조사에 적힌 예/아니오를 그대로 믿어라. "
             "그 다음 decision: abnormal_exit가 true면 음주측정 pending/없음→hold, pass→open, fail→deny. "
             "false면 open. reason은 한국어 한 문장으로 근거를 쓴다."
         )},
@@ -266,17 +266,23 @@ def _facts_for(plate: str, when: datetime) -> tuple[str, dict[str, Any] | None]:
     else:
         reg = "미등록 차량 (외부인)"
     now_hour = when.hour + when.minute / 60
-    late_night = "예" if when.hour <= 5 else "아니오"
+    late_night = when.hour <= 5
     if hours:
         avg = sum(hours) / len(hours)
         diff = abs(now_hour - avg)
         hist = (
-            f"최근 30일 출차 {len(hours)}건, 평소 출차 시각 평균 {avg:.1f}시 (예: {hours[:5]}시)\n"
-            f"- 지금은 평소보다 {diff:.1f}시간 어긋남 (2시간 넘으면 이상), 심야(00~05시) 여부: {late_night}"
-            + (" → 이력 5건 미만이라 판단 근거 부족" if len(hours) < 5 else "")
+            f"최근 30일 출차 {len(hours)}건, 평소 출차 시각 평균 {avg:.1f}시 (예: {hours[:5]}시), "
+            f"지금과 {diff:.1f}시간 차이"
         )
+        cond_a = diff > 2 and len(hours) >= 5
     else:
-        hist = f"최근 30일 출차 이력 없음 (판단 근거 부족), 심야(00~05시) 여부: {late_night}"
+        hist = "최근 30일 출차 이력 없음"
+        cond_a = False
+    yn = lambda flag: "예" if flag else "아니오"  # noqa: E731
+    hist += (
+        f"\n- 조건A (평소보다 2시간 넘게 어긋남, 이력 5건 이상일 때만): {yn(cond_a)}"
+        f"\n- 조건B (심야 00~05시 출차): {yn(late_night)}"
+    )
     with get_conn() as conn:
         check = conn.execute(
             """select id, status from sobriety_checks
