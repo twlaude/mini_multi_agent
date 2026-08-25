@@ -10,7 +10,7 @@
 import datetime as dt
 import random
 
-DSN = "postgresql://parking:parking@localhost:5435/parking"
+DSN = "postgresql://parking:parking@localhost:5432/parking"
 
 try:
     import psycopg  # psycopg 3

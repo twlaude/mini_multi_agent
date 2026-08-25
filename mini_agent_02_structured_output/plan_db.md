@@ -21,11 +21,11 @@
   3. **꼬리물기 탐지** — 각 주차면에 번호인식 장치가 있다고 가정. 자리에서 관측됐는데 게이트 입차 기록이 없는 번호 = 꼬리물기
 - **작업 위치**: 이 repo의 `mini_agent_02_structured_output/` — 기존 `backend/`(FastAPI)와 `frontend/`(Streamlit) 뼈대 **위에서 개조**. 계층 구조(백엔드 `app/routers → services → schemas`, 프론트 `app_pages → clients → core/api_client`)는 유지하고, 여행루트 도메인 파일들은 참고하거나 지우고 주차 도메인으로 교체
 - **응답 봉투**: `{"success": bool, "message": str, "data": ...}` (기존 api_client.py 약속 유지)
-- **DB 접속 (백엔드가 쓸 DSN)**: `postgresql://parking:parking@<태웅IP>:5435/parking`
-  (태웅 본인 컴에서만 `localhost:5435`. :5434는 다른 컨테이너가 써서 :5435로 비킴)
+- **DB 접속 (백엔드가 쓸 DSN)**: `postgresql://parking:parking@<태웅IP>:5432/parking`
+  (태웅 본인 컴에서만 `localhost:5432`. 컨테이너 이름 `pg` — 프로젝트별로 새로 만들지 않고 DB만 추가해서 공용)
 - ⚠️ 뼈대는 supabase 클라이언트인데 이번엔 로컬 PG니까 백엔드는 **psycopg**로 접속 (plan_backend.md 참조)
 - **배포 방식: git 없음 + 역할별 분산 호스팅** — 같은 네트워크(교실 와이파이 또는 핫스팟)에서 **각자 자기 담당만 자기 컴에 띄우고 서로 IP로 접속**:
-  · 태웅 컴 = **DB** (docker PG :5435) ← 성엽 백엔드가 원격 접속
+  · 태웅 컴 = **DB** (docker PG :5432) ← 성엽 백엔드가 원격 접속
   · 성엽 컴 = **백엔드** (uvicorn `--host 0.0.0.0 --port 8000`) ← 오현님 프론트·카메라가 원격 접속
   · 오현님 컴 = **프론트**(streamlit) + **Ollama**(docker :11434) + 카메라 ← Ollama는 성엽 백엔드가 원격 호출
 - **IP 교환이 첫 일**: 각자 자기 IP 확인(맥 `ipconfig getifaddr en0` / 윈도우 `ipconfig`)해서 디코에 공유. IP·포트는 코드에 하드코딩 말고 **.env**로 (와이파이 바뀌면 IP 바뀜). API 경로·포트·스키마 계약은 임의 변경 금지
@@ -37,7 +37,7 @@ Docker PG 컨테이너 + 스키마 + 가짜 데이터 시딩까지. 백엔드가
 ## 2. 컨테이너
 
 ```bash
-docker run -d --name parking-pg -p 5435:5432 \
+docker run -d --name pg -p 5432:5432 \
   -e POSTGRES_USER=parking -e POSTGRES_PASSWORD=parking -e POSTGRES_DB=parking \
   postgres:16
 ```
@@ -121,7 +121,7 @@ create table if not exists alerts (
 4. 성엽한테 DSN + 이 파일의 스키마 공유 → 백엔드 붙는 것 확인
 
 ## 6. 완료 기준
-- [ ] `psql postgresql://parking:parking@localhost:5435/parking -c '\dt'` 테이블 6개
+- [ ] `psql postgresql://parking:parking@localhost:5432/parking -c '\dt'` 테이블 6개
 - [ ] seed 검증 assert 3개 통과
 - [ ] 백엔드에서 SELECT 성공 (성엽 헬스체크 라우터로 확인)
 
