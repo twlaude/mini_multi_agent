@@ -126,8 +126,11 @@ def _agent_gate(
     )
     start, end = content.find("{"), content.rfind("}")
     if start < 0 or end < start:
-        raise ValueError("최종 JSON 객체를 찾지 못했습니다.")
-    data = json.loads(content[start:end + 1])
+        raise ValueError(f"최종 JSON 객체를 찾지 못했습니다: {content[:200]!r}")
+    try:
+        data = _normalize_decision(json.loads(content[start:end + 1]))
+    except Exception as error:
+        raise ValueError(f"최종 답 파싱 실패 ({error}): {content[:200]!r}") from error
     data["mode"] = "agent"
     if data.get("decision") == "hold" and not data.get("check_id"):
         if check_id is None:
@@ -135,6 +138,38 @@ def _agent_gate(
         data["check_id"] = check_id
     decision = AgentGateDecision.model_validate(data)
     return _guard_sobriety_consistency(decision, check_id)
+
+
+DECISION_ALIASES = {
+    "open": "open", "allow": "open", "approve": "open", "pass": "open",
+    "열림": "open", "허용": "open", "통과": "open", "개방": "open",
+    "deny": "deny", "reject": "deny", "block": "deny", "close": "deny",
+    "거부": "deny", "차단": "deny", "닫힘": "deny", "불가": "deny",
+    "hold": "hold", "wait": "hold", "pending": "hold",
+    "대기": "hold", "보류": "hold", "측정대기": "hold",
+}
+
+
+def _normalize_decision(data: dict[str, Any]) -> dict[str, Any]:
+    """소형 모델이 'OPEN', '허용', reason을 dict로 주는 등 형식을 흔드는 걸 받아준다."""
+    raw = str(data.get("decision", "")).strip().lower().replace(" ", "")
+    decision = DECISION_ALIASES.get(raw)
+    if decision is None:
+        for key, value in DECISION_ALIASES.items():
+            if key in raw:
+                decision = value
+                break
+    if decision is None:
+        raise ValueError(f"decision 해석 불가: {data.get('decision')!r}")
+    reason = data.get("reason")
+    if not isinstance(reason, str):
+        reason = json.dumps(reason, ensure_ascii=False, default=str) if reason else ""
+    check_id = data.get("check_id")
+    if isinstance(check_id, str):
+        check_id = int(check_id) if check_id.strip().isdigit() else None
+    elif not isinstance(check_id, int):
+        check_id = None
+    return {"decision": decision, "reason": reason.strip() or "(사유 없음)", "check_id": check_id}
 
 
 def _guard_sobriety_consistency(

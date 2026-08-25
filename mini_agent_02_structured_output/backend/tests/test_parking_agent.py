@@ -237,3 +237,16 @@ def test_guard_overrides_open_when_requested_check_is_pending(monkeypatch) -> No
     assert "보정" in fixed.reason
     # 측정 요청이 없었으면 손대지 않는다
     assert agent_service._guard_sobriety_consistency(D(decision="open", reason="ok"), None).decision == "open"
+
+
+def test_normalize_decision_accepts_loose_model_output() -> None:
+    n = agent_service._normalize_decision
+    assert n({"decision": "OPEN", "reason": "ok"})["decision"] == "open"
+    assert n({"decision": " 허용 ", "reason": "ok"})["decision"] == "open"
+    assert n({"decision": "Deny (음주)", "reason": {"why": "x"}})["reason"] == '{"why": "x"}'
+    assert n({"decision": "hold", "reason": "", "check_id": "17"}) == {
+        "decision": "hold", "reason": "(사유 없음)", "check_id": 17,
+    }
+    import pytest
+    with pytest.raises(ValueError):
+        n({"decision": "maybe", "reason": "x"})
