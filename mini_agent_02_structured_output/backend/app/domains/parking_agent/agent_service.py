@@ -133,7 +133,30 @@ def _agent_gate(
         if check_id is None:
             raise ValueError("hold 판단 전에 음주측정 요청 툴을 호출해야 합니다.")
         data["check_id"] = check_id
-    return AgentGateDecision.model_validate(data)
+    decision = AgentGateDecision.model_validate(data)
+    return _guard_sobriety_consistency(decision, check_id)
+
+
+def _guard_sobriety_consistency(
+    decision: AgentGateDecision, check_id: int | None,
+) -> AgentGateDecision:
+    """소형 모델 안전장치: 라마가 음주측정을 요청해 놓고 결과와 모순되는 결정을 내면
+    측정 상태(pending→hold, fail→deny)에 맞춘다. 라마의 reason 문장은 그대로 둔다."""
+    if check_id is None:
+        return decision
+    with get_conn() as conn:
+        row = conn.execute(
+            "select status from sobriety_checks where id = %s", (check_id,)
+        ).fetchone()
+    status = row["status"] if row else None
+    fixed = {"pending": "hold", "fail": "deny"}.get(status)
+    if fixed and decision.decision != fixed:
+        logger.warning("agent 결정 %s ↔ 측정 %s 모순 → %s로 보정", decision.decision, status, fixed)
+        return decision.model_copy(update={
+            "decision": fixed, "check_id": check_id,
+            "reason": f"{decision.reason} (음주측정 {status} → {fixed} 보정)",
+        })
+    return decision.model_copy(update={"check_id": check_id})
 def _record_gate(
     payload: AgentGateRequest, decision: AgentGateDecision, when: datetime,
 ) -> None:
@@ -200,17 +223,28 @@ def ask_agent(
     question: str, transport: httpx.BaseTransport | None = None,
 ) -> dict[str, Any]:
     when = _kst()
-    parking_context = {
-        "visitors": list_visitors(), "tailgating": list_tailgating(),
-    }
+    visitors = list_visitors()
+    tailgating = list_tailgating()
+    # 소형 모델이 JSON 덤프는 잘 못 읽어서 한국어 문장으로 정리해 준다
+    visitor_text = ", ".join(
+        f"{v['plate']}({v.get('spot_id') or '자리 미상'}, {str(v['entered_at'])[:16]} 입차)"
+        for v in visitors
+    ) or "없음"
+    tail_text = ", ".join(
+        f"{t['plate']}({t.get('spot_id') or '자리 미상'})" for t in tailgating
+    ) or "없음"
     messages = [
         {"role": "system", "content": (
-            "너는 주차장 관제 에이전트다. 주차장 관제 질문에 아래 현재 조회와 툴 결과만 "
-            "근거로 한국어로 답하라. 툴 결과에 error가 있으면 인자를 고쳐 다시 호출한다."
+            "너는 주차장 관제 에이전트다. 반드시 한국어로 답한다. "
+            "외부인/꼬리물기 현황은 아래 '현재 상황'에 이미 있으니 그걸로 바로 답하고, "
+            "특정 차량의 등록 여부·출차 이력·입차 기록이 필요할 때만 툴을 쓴다. "
+            "툴 결과에 error가 있으면 인자를 고쳐 다시 호출한다."
         )},
         {"role": "user", "content": (
-            f"현재 KST={when.isoformat()}\n현재 조회={json.dumps(parking_context, default=str, ensure_ascii=False)}"
-            f"\n질문={question}"
+            f"현재 KST={when.isoformat()}\n"
+            f"[현재 상황] 주차 중인 외부인 {len(visitors)}대: {visitor_text}\n"
+            f"[현재 상황] 꼬리물기 의심 {len(tailgating)}대: {tail_text}\n"
+            f"질문: {question}"
         )},
     ]
     for attempt in range(2):

@@ -211,3 +211,29 @@ def test_bad_tool_args_are_fed_back_instead_of_raising(monkeypatch) -> None:
         transport=httpx.MockTransport(handler),
     )
     assert result.decision == "open" and calls == 2
+
+
+def test_guard_overrides_open_when_requested_check_is_pending(monkeypatch) -> None:
+    from app.domains.parking_agent.schemas import AgentGateDecision as D
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, _sql, _params):
+            class R:
+                def fetchone(self):
+                    return {"status": "pending"}
+            return R()
+
+    monkeypatch.setattr(agent_service, "get_conn", lambda: Conn())
+    fixed = agent_service._guard_sobriety_consistency(
+        D(decision="open", reason="recent_check_pass"), 27
+    )
+    assert fixed.decision == "hold" and fixed.check_id == 27
+    assert "보정" in fixed.reason
+    # 측정 요청이 없었으면 손대지 않는다
+    assert agent_service._guard_sobriety_consistency(D(decision="open", reason="ok"), None).decision == "open"
