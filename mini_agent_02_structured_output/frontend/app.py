@@ -15,11 +15,20 @@ structured_page = st.Page("app_pages/09_structured_output.py", title="Structured
 image_page = st.Page("app_pages/10_image_analysis.py", title="이미지 분석")
 tts_page = st.Page("app_pages/11_tts.py", title="음성 생성")
 travel_route_page = st.Page("app_pages/12_travel_route.py", title="여행 루트 추천")
+parking_dashboard_page = st.Page(
+    "app_pages/parking_dashboard_tab.py", title="관제 대시보드"
+)
+parking_gate_page = st.Page(
+    "app_pages/parking_gate_tab.py", title="게이트 시뮬레이터"
+)
+parking_chat_page = st.Page(
+    "app_pages/parking_chat_tab.py", title="관제 챗봇"
+)
 
 navigation = st.navigation(
     [home_page, concept_page, travel_page, environment_page, llm_page, provider_page,
      prompt_page, validation_page, structured_page, travel_route_page, image_page,
-     tts_page],
+     tts_page, parking_dashboard_page, parking_gate_page, parking_chat_page],
     position="hidden",
 )
 
@@ -43,6 +52,12 @@ with st.sidebar:
         st.page_link(validation_page, label="2-2. Pydantic 검증")
         st.page_link(structured_page, label="2-3. Structured Output")
         st.page_link(travel_route_page, label="2-4. 여행 루트 추천")
+
+    st.divider()
+    with st.expander("03. 주차 출입 시스템", expanded=True):
+        st.page_link(parking_dashboard_page, label="3-1. 관제 대시보드")
+        st.page_link(parking_gate_page, label="3-2. 게이트 시뮬레이터")
+        st.page_link(parking_chat_page, label="3-3. 관제 챗봇")
 
     st.divider()
     st.caption("실행 환경")

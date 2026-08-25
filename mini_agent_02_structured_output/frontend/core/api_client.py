@@ -1,11 +1,15 @@
 """모든 Agent 메뉴에서 공통으로 사용하는 HTTP 요청 기능."""
 
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 BACKEND_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 REQUEST_TIMEOUT = 70.0
 

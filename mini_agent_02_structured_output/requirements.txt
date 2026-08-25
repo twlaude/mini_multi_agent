@@ -1,7 +1,9 @@
 # 백엔드(FastAPI) + 프론트엔드(Streamlit) 공용 — Streamlit Cloud/Render 둘 다 이 파일을 읽는다. 줄 삭제 금지, 추가만.
 fastapi
+easyocr
 google-genai
 httpx
+opencv-python
 openai
 pydantic
 python-dotenv
