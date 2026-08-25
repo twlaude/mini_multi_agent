@@ -26,6 +26,7 @@ def test_recognize_endpoint_retries_and_returns_plate(monkeypatch) -> None:
             return [((0, 0, 0, 0), "12가", 1.0), ((0, 0, 0, 0), "3456", 0.6)]
 
     monkeypatch.setattr(ocr, "get_reader", lambda: FakeReader())
+    monkeypatch.setattr(ocr, "_decode", lambda b: b)
     response = client.post(
         "/parking/plate/recognize",
         files={"image": ("plate.png", b"fake-png-bytes", "image/png")},
@@ -45,6 +46,7 @@ def test_recognize_endpoint_reports_unreadable_plate(monkeypatch) -> None:
             return [((0, 0, 0, 0), "hello", 0.3)]
 
     monkeypatch.setattr(ocr, "get_reader", lambda: BlindReader())
+    monkeypatch.setattr(ocr, "_decode", lambda b: b)
     response = client.post(
         "/parking/plate/recognize",
         files={"image": ("plate.png", b"fake", "image/png")},
@@ -53,3 +55,18 @@ def test_recognize_endpoint_reports_unreadable_plate(monkeypatch) -> None:
     body = response.json()
     assert body["success"] is False
     assert body["data"]["plate"] is None and body["data"]["raw_texts"] == ["hello"]
+
+
+def test_recognize_endpoint_rejects_non_image(monkeypatch) -> None:
+    monkeypatch.setattr(ocr, "get_reader", lambda: object())
+
+    def broken(_bytes):
+        raise ocr.NotAnImageError("이미지로 읽을 수 없는 파일입니다 (jpg/png만 지원).")
+
+    monkeypatch.setattr(ocr, "_decode", broken)
+    response = client.post(
+        "/parking/plate/recognize",
+        files={"image": ("x.png", b"not an image", "image/png")},
+    )
+    assert response.status_code == 400
+    assert response.json()["success"] is False

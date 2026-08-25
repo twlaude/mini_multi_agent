@@ -38,11 +38,26 @@ def extract_plate(texts: list[str]) -> str | None:
     return f"{head}{hangul}{tail}"
 
 
+class NotAnImageError(ValueError):
+    """이미지로 디코딩되지 않는 업로드."""
+
+
+def _decode(image_bytes: bytes):
+    import cv2
+    import numpy as np
+
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise NotAnImageError("이미지로 읽을 수 없는 파일입니다 (jpg/png만 지원).")
+    return image
+
+
 def recognize_plate(image_bytes: bytes) -> dict:
     reader = get_reader()
+    image = _decode(image_bytes)
     raw_texts: list[str] = []
     for attempt, (mag_ratio, width_ths) in enumerate(ATTEMPTS, start=1):
-        results = reader.readtext(image_bytes, mag_ratio=mag_ratio, width_ths=width_ths)
+        results = reader.readtext(image, mag_ratio=mag_ratio, width_ths=width_ths)
         raw_texts = [text for _box, text, _conf in results]
         plate = extract_plate(raw_texts)
         if plate:

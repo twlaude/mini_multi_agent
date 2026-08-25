@@ -74,6 +74,8 @@ async def plate_recognize(image: UploadFile = File(...)):
         data = ocr.recognize_plate(content)
     except ImportError:
         return _error("easyocr 미설치 — 백엔드에 `pip install easyocr` 필요", 503)
+    except ocr.NotAnImageError as error:
+        return _error(str(error), 400)
     except Exception as error:
         return _error(f"번호판 인식 실패: {error}", 500)
     if data["plate"] is None:
