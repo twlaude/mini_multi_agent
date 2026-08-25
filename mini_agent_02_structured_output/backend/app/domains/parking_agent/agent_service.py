@@ -42,15 +42,37 @@ def _kst(value: datetime | None = None) -> datetime:
     if value is None:
         return datetime.now(KST)
     return value.replace(tzinfo=KST) if value.tzinfo is None else value.astimezone(KST)
+GATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {"type": "string", "enum": ["open", "deny", "hold"]},
+        "reason": {"type": "string"},
+    },
+    "required": ["decision", "reason"],
+}
+NOTE_SCHEMA = {
+    "type": "object",
+    "properties": {"note": {"type": "string"}},
+    "required": ["note"],
+}
+
+
 def _completion(
     messages: list[dict[str, Any]], transport: httpx.BaseTransport | None,
     use_tools: bool = True, timeout: float | None = None,
+    schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": settings.ollama_model, "messages": messages, "stream": False,
+        "temperature": 0,
     }
     if use_tools:
         payload.update({"tools": OPENAI_TOOLS, "tool_choice": "auto"})
+    if schema is not None:
+        # Ollama OpenAI 호환 structured output — 소형 모델 JSON 삑사리를 구조적으로 막는다
+        payload["response_format"] = {
+            "type": "json_schema", "json_schema": {"name": "answer", "schema": schema},
+        }
     timeout = settings.request_timeout_seconds if timeout is None else timeout
     with httpx.Client(transport=transport, timeout=timeout) as client:
         response = client.post(
@@ -115,31 +137,31 @@ def _agent_gate(
     payload: AgentGateRequest, when: datetime,
     transport: httpx.BaseTransport | None,
 ) -> AgentGateDecision:
+    """조회는 코드(_facts_for), 판단은 라마(스키마 강제 1콜), 실행(측정 요청·정합성)은 코드."""
+    facts, recent_check = _facts_for(payload.plate, when)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": (
             f"차량={payload.plate}, 방향={payload.direction}, "
             f"요청시각(KST)={when.isoformat()}\n"
-            f"[사전 조사 결과]\n{_facts_for(payload.plate, when)}\n"
+            f"[사전 조사 결과]\n{facts}\n"
             "위 사실을 근거로 판단하라. 출차인데 '평소보다 2시간 넘게 어긋남' 또는 '심야 여부: 예'면 "
             "이상 출차 → 음주측정이 pending이거나 없으면 hold, pass면 open, fail이면 deny. "
-            "입차이거나 이상이 없으면 open. 최종 JSON의 reason은 한국어 한 문장."
+            "입차이거나 이상이 없으면 open. reason은 한국어 한 문장으로 근거를 쓴다."
         )},
     ]
-    content, _, check_id = _tool_loop(
-        messages, when, transport, payload.plate, structured=True
-    )
+    message = _completion(messages, transport, use_tools=False, schema=GATE_SCHEMA)
+    content = message.get("content") or ""
     try:
         data = _normalize_decision(_extract_decision_json(content))
     except Exception as error:
         raise ValueError(f"최종 답 파싱 실패 ({error}): {content[:200]!r}") from error
     data["mode"] = "agent"
-    if data.get("decision") == "hold" and not data.get("check_id"):
-        if check_id is None:
-            # 라마가 hold로 판단해 놓고 툴 호출을 빼먹은 경우 — 판단은 라마 몫, 요청 생성은 코드가 대신
-            logger.warning("hold 판단인데 request_sobriety_check 미호출 → 코드가 대신 요청 생성")
-            check_id = TOOL_FUNCTIONS["request_sobriety_check"](payload.plate, when)["check_id"]
-        data["check_id"] = check_id
+    check_id = recent_check["id"] if recent_check else None
+    if data["decision"] == "hold" and check_id is None:
+        # 라마가 hold로 판단 → 측정 요청 생성은 코드가 (판단은 라마 몫)
+        check_id = TOOL_FUNCTIONS["request_sobriety_check"](payload.plate, when)["check_id"]
+    data["check_id"] = check_id
     decision = AgentGateDecision.model_validate(data)
     return _guard_sobriety_consistency(decision, check_id)
 
@@ -156,7 +178,7 @@ def _extract_decision_json(content: str) -> dict[str, Any]:
             index = content.find("{", index + 1)
             continue
         if isinstance(obj, dict):
-            if "decision" not in obj and "name" in obj:  # 툴 호출 흉내로 답한 경우
+            if "decision" not in obj and "note" not in obj and "name" in obj:  # 툴 호출 흉내
                 obj = {"decision": obj["name"], "reason": str(obj.get("parameters") or "")}
             return obj
         index = content.find("{", index + 1)
@@ -224,9 +246,9 @@ def _guard_sobriety_consistency(
             "reason": f"{decision.reason} (음주측정 {status} → {fixed} 보정)",
         })
     return decision.model_copy(update={"check_id": check_id})
-def _facts_for(plate: str, when: datetime) -> str:
+def _facts_for(plate: str, when: datetime) -> tuple[str, dict[str, Any] | None]:
     """라마가 툴을 여러 번 돌지 않아도 되게 핵심 사실을 미리 한국어로 정리한다.
-    (조회는 코드가 하고, 판단은 라마가 한다)"""
+    (조회는 코드가 하고, 판단은 라마가 한다). 최근 1시간 음주측정 row도 같이 돌려준다."""
     vehicle = TOOL_FUNCTIONS["lookup_vehicle"](plate)
     history = TOOL_FUNCTIONS["get_exit_history"](plate, when)
     hours = [e["hour_kst"] for e in history["exits"]]
@@ -257,7 +279,8 @@ def _facts_for(plate: str, when: datetime) -> str:
         f"최근 1시간 음주측정: id={check['id']} 상태={check['status']}"
         if check else "최근 1시간 음주측정 요청 없음"
     )
-    return f"- {reg}\n- {hist}\n- 현재 KST {when.hour:02d}시 {when.minute:02d}분\n- {check_text}"
+    facts = f"- {reg}\n- {hist}\n- 현재 KST {when.hour:02d}시 {when.minute:02d}분\n- {check_text}"
+    return facts, (dict(check) if check else None)
 
 
 def _record_gate(
@@ -313,17 +336,18 @@ def agent_note(
         ", ".join(f"{k}={v}" for k, v in row.items() if v is not None) for row in rows
     ) or "해당 차량 없음"
     messages = [{"role": "system", "content": (
-        "너는 주차장 관제 에이전트다. 한국어로, 아래 사실에 있는 내용만 써서 두 문장 이내로 답하라. "
+        "너는 주차장 관제 에이전트다. 한국어로만, 아래 사실에 있는 내용만 써서 두 문장 이내로 답하라. "
         "사실에 없는 내용(운전 실력, 차종, 성향 등)은 절대 지어내지 마라. " + guide
     )}, {
         "role": "user", "content": f"현재 KST={_kst().strftime('%Y-%m-%d %H:%M')}\n{kind} {len(rows)}대: {facts}",
     }]
     try:
         # 화면 목록 조회가 Ollama 장애로 오래 매달리지 않게 1회·짧은 타임아웃
-        content = _completion(messages, transport, use_tools=False, timeout=20.0)
-        content = (content.get("content") or "").strip()
-        if content:
-            return " ".join(content.splitlines())[:300]
+        message = _completion(messages, transport, use_tools=False, timeout=30.0, schema=NOTE_SCHEMA)
+        content = (message.get("content") or "").strip()
+        note = str(_extract_decision_json(content).get("note", "")).strip() if content else ""
+        if note:
+            return " ".join(note.splitlines())[:300]
     except Exception as error:
         logger.warning("agent_note(%s) 실패: %s", kind, error)
     return f"(에이전트 응답 없음) {kind} 차량 {len(rows)}대를 확인했습니다."

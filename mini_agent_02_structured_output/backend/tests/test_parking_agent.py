@@ -11,47 +11,30 @@ from app.domains.parking_agent.schemas import AgentGateDecision, AgentGateReques
 from app.domains.parking_agent.tools import TOOL_FUNCTIONS
 
 
-def test_mock_transport_executes_tool_and_parses_json(monkeypatch) -> None:
+def test_gate_single_schema_call_uses_prefetched_facts(monkeypatch) -> None:
     requests: list[dict] = []
-    called: dict = {}
-
-    def fake_history(plate: str, at: datetime | None = None) -> dict:
-        called.update({"plate": plate, "at": at})
-        return {"plate": plate, "count": 7, "exits": [{"hour_kst": 19}]}
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         requests.append(body)
         assert request.url.path == "/v1/chat/completions"
-        if len(requests) == 1:
-            return httpx.Response(200, json={"choices": [{"message": {
-                "role": "assistant", "content": None, "tool_calls": [{
-                    "id": "call-1", "type": "function", "function": {
-                        "name": "get_exit_history",
-                        "arguments": json.dumps({"plate": "잘못된번호"}),
-                    },
-                }],
-            }}]})
-        tool_message = body["messages"][-1]
-        assert tool_message["role"] == "tool"
-        assert "2026-08-25T03:00:00+09:00" in tool_message["content"]
+        assert "tools" not in body
+        assert body["response_format"]["json_schema"]["schema"]["properties"]["decision"]["enum"] == ["open", "deny", "hold"]
+        assert "사전 조사 결과" in body["messages"][-1]["content"]
         return httpx.Response(200, json={"choices": [{"message": {
             "role": "assistant",
-            "content": '{"decision":"open","reason":"정상 이력","check_id":null}',
+            "content": '{"decision":"open","reason":"평소 시간대 출차"}',
         }}]})
 
-    monkeypatch.setitem(TOOL_FUNCTIONS, "get_exit_history", fake_history)
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 등록 차량", None))
+    monkeypatch.setattr(agent_service, "_guard_sobriety_consistency", lambda d, c: d)
     monkeypatch.setattr(agent_service, "_record_gate", lambda *args: None)
     result = agent_service.run_agent(
-        AgentGateRequest(
-            plate="12가3456", direction="exit", at=datetime(2026, 8, 25, 3)
-        ),
+        AgentGateRequest(plate="12가3456", direction="exit", at=datetime(2026, 8, 25, 19)),
         transport=httpx.MockTransport(handler),
     )
-    assert result == AgentGateDecision(decision="open", reason="정상 이력")
-    assert called["plate"] == "12가3456"
-    assert called["at"].isoformat() == "2026-08-25T03:00:00+09:00"
-    assert len(requests) == 2
+    assert result == AgentGateDecision(decision="open", reason="평소 시간대 출차")
+    assert len(requests) == 1
 
 
 def test_http_failure_retries_once_then_workflow_fallback(monkeypatch) -> None:
@@ -74,6 +57,7 @@ def test_http_failure_retries_once_then_workflow_fallback(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(workflow_service, "evaluate_gate", fallback)
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", None))
     monkeypatch.setattr(
         agent_service, "_record_gate",
         lambda payload, decision, at: recorded.append((payload, decision, at)),
@@ -201,16 +185,13 @@ def test_bad_tool_args_are_fed_back_instead_of_raising(monkeypatch) -> None:
         tool_message = body["messages"][-1]
         assert tool_message["role"] == "tool" and "error" in tool_message["content"]
         return httpx.Response(200, json={"choices": [{"message": {
-            "role": "assistant",
-            "content": '{"decision":"open","reason":"정상","check_id":null}',
+            "role": "assistant", "content": "경보 종류를 잘못 넣어 다시 확인했습니다.",
         }}]})
 
-    monkeypatch.setattr(agent_service, "_record_gate", lambda *args: None)
-    result = agent_service.run_agent(
-        AgentGateRequest(plate="12가3456", direction="exit", at=datetime(2026, 8, 25, 19)),
-        transport=httpx.MockTransport(handler),
-    )
-    assert result.decision == "open" and calls == 2
+    monkeypatch.setattr(agent_service, "list_visitors", lambda: [])
+    monkeypatch.setattr(agent_service, "list_tailgating", lambda: [])
+    result = agent_service.ask_agent("12가3456 경보 만들어", httpx.MockTransport(handler))
+    assert result["tool_calls"] == ["create_alert"] and calls == 2
 
 
 def test_guard_overrides_open_when_requested_check_is_pending(monkeypatch) -> None:
@@ -271,7 +252,7 @@ def test_hold_without_tool_call_creates_check_in_code(monkeypatch) -> None:
             "content": '{"decision":"hold","reason":"심야 출차","check_id":null}',
         }}]})
 
-    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: "- 테스트")
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: ("- 테스트", None))
     monkeypatch.setitem(
         TOOL_FUNCTIONS, "request_sobriety_check",
         lambda plate, at=None: {"check_id": 99, "plate": plate, "status": "pending"},
