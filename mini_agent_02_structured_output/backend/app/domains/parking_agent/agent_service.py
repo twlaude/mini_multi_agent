@@ -121,8 +121,9 @@ def _agent_gate(
             f"차량={payload.plate}, 방향={payload.direction}, "
             f"요청시각(KST)={when.isoformat()}\n"
             f"[사전 조사 결과]\n{_facts_for(payload.plate, when)}\n"
-            "위 사실을 근거로 판단하라. 이상 출차라고 판단하면 request_sobriety_check를 "
-            "호출한 뒤 결과를 반영하고, 그 외엔 툴 없이 바로 최종 JSON을 답하라."
+            "위 사실을 근거로 판단하라. 출차인데 '평소보다 2시간 넘게 어긋남' 또는 '심야 여부: 예'면 "
+            "이상 출차 → 음주측정이 pending이거나 없으면 hold, pass면 open, fail이면 deny. "
+            "입차이거나 이상이 없으면 open. 최종 JSON의 reason은 한국어 한 문장."
         )},
     ]
     content, _, check_id = _tool_loop(
@@ -135,7 +136,9 @@ def _agent_gate(
     data["mode"] = "agent"
     if data.get("decision") == "hold" and not data.get("check_id"):
         if check_id is None:
-            raise ValueError("hold 판단 전에 음주측정 요청 툴을 호출해야 합니다.")
+            # 라마가 hold로 판단해 놓고 툴 호출을 빼먹은 경우 — 판단은 라마 몫, 요청 생성은 코드가 대신
+            logger.warning("hold 판단인데 request_sobriety_check 미호출 → 코드가 대신 요청 생성")
+            check_id = TOOL_FUNCTIONS["request_sobriety_check"](payload.plate, when)["check_id"]
         data["check_id"] = check_id
     decision = AgentGateDecision.model_validate(data)
     return _guard_sobriety_consistency(decision, check_id)
@@ -231,11 +234,18 @@ def _facts_for(plate: str, when: datetime) -> str:
         reg = f"등록 차량 (소유주 {vehicle['owner_name']}, {vehicle['vehicle_type']})"
     else:
         reg = "미등록 차량 (외부인)"
+    now_hour = when.hour + when.minute / 60
+    late_night = "예" if when.hour <= 5 else "아니오"
     if hours:
         avg = sum(hours) / len(hours)
-        hist = f"최근 30일 출차 {len(hours)}건, 평소 출차 시각 평균 {avg:.1f}시 (예: {hours[:5]}시)"
+        diff = abs(now_hour - avg)
+        hist = (
+            f"최근 30일 출차 {len(hours)}건, 평소 출차 시각 평균 {avg:.1f}시 (예: {hours[:5]}시)\n"
+            f"- 지금은 평소보다 {diff:.1f}시간 어긋남 (2시간 넘으면 이상), 심야(00~05시) 여부: {late_night}"
+            + (" → 이력 5건 미만이라 판단 근거 부족" if len(hours) < 5 else "")
+        )
     else:
-        hist = "최근 30일 출차 이력 없음"
+        hist = f"최근 30일 출차 이력 없음 (판단 근거 부족), 심야(00~05시) 여부: {late_night}"
     with get_conn() as conn:
         check = conn.execute(
             """select id, status from sobriety_checks
@@ -295,13 +305,18 @@ def agent_note(
     transport: httpx.BaseTransport | None = None,
 ) -> str:
     """조회 결과를 라마가 관제 담당자 관점에서 해석한 한 줄 코멘트 (추론 단계)."""
+    if kind == "외부인":
+        guide = "외부인은 등록되지 않은 방문 차량이다. 몇 대가 어느 자리에 언제부터 있는지 말하고, 오래 머문 차량이 있으면 짚어라."
+    else:
+        guide = "꼬리물기 의심은 게이트 입차 기록 없이 주차면에 나타난 차량이다. 어느 자리의 어떤 차량인지 말하고 현장 확인을 권하라."
+    facts = "; ".join(
+        ", ".join(f"{k}={v}" for k, v in row.items() if v is not None) for row in rows
+    ) or "해당 차량 없음"
     messages = [{"role": "system", "content": (
-        "너는 주차장 관제 에이전트다. 아래 조회 결과를 보고 관제 담당자에게 "
-        "한국어 한두 문장으로 판단을 말하라: 몇 대인지, 가장 주의할 차량과 그 이유, "
-        "권장 조치. 표나 목록 없이 문장으로만."
+        "너는 주차장 관제 에이전트다. 한국어로, 아래 사실에 있는 내용만 써서 두 문장 이내로 답하라. "
+        "사실에 없는 내용(운전 실력, 차종, 성향 등)은 절대 지어내지 마라. " + guide
     )}, {
-        "role": "user", "content": f"현재 KST={_kst().isoformat()}\n{kind} 조회 결과: " +
-        json.dumps(rows, ensure_ascii=False, default=str),
+        "role": "user", "content": f"현재 KST={_kst().strftime('%Y-%m-%d %H:%M')}\n{kind} {len(rows)}대: {facts}",
     }]
     try:
         # 화면 목록 조회가 Ollama 장애로 오래 매달리지 않게 1회·짧은 타임아웃

@@ -262,3 +262,24 @@ def test_extract_decision_json_handles_messy_small_model_output() -> None:
     import pytest
     with pytest.raises(ValueError):
         x("그냥 문장")
+
+
+def test_hold_without_tool_call_creates_check_in_code(monkeypatch) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {
+            "role": "assistant",
+            "content": '{"decision":"hold","reason":"심야 출차","check_id":null}',
+        }}]})
+
+    monkeypatch.setattr(agent_service, "_facts_for", lambda plate, when: "- 테스트")
+    monkeypatch.setitem(
+        TOOL_FUNCTIONS, "request_sobriety_check",
+        lambda plate, at=None: {"check_id": 99, "plate": plate, "status": "pending"},
+    )
+    monkeypatch.setattr(agent_service, "_guard_sobriety_consistency", lambda d, c: d)
+    monkeypatch.setattr(agent_service, "_record_gate", lambda *args: None)
+    result = agent_service.run_agent(
+        AgentGateRequest(plate="00테0001", direction="exit", at=datetime(2026, 8, 25, 3)),
+        transport=httpx.MockTransport(handler),
+    )
+    assert result.decision == "hold" and result.check_id == 99
