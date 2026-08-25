@@ -26,7 +26,7 @@ class Settings:
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     database_url: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://agent_user:agent_password@127.0.0.1:5433/agent_db",
+        "postgresql://agent_user:agent_password@127.0.0.1:5432/agent_db",
     )
     redis_url: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
     redis_ttl_seconds: int = int(os.getenv("REDIS_TTL_SECONDS", "1800"))

@@ -24,7 +24,7 @@ class Settings:
     ollama_embedding_model: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "embeddinggemma")
     database_url: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://agent_user:agent_password@127.0.0.1:5433/agent_db",
+        "postgresql://agent_user:agent_password@127.0.0.1:5432/agent_db",
     )
     rag_collection: str = os.getenv("RAG_COLLECTION", "mini_agent_travel")
     rag_min_score: float = float(os.getenv("RAG_MIN_SCORE", "0.35"))

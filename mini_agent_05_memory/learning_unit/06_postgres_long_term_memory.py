@@ -10,7 +10,7 @@ import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://agent_user:agent_password@127.0.0.1:5433/agent_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://agent_user:agent_password@127.0.0.1:5432/agent_db")
 
 
 def upsert_memory(user_id: str, key: str, value: str) -> dict:
