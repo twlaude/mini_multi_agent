@@ -9,5 +9,6 @@ pydantic
 python-dotenv
 python-multipart
 pytest
+psycopg[binary]
 streamlit
 uvicorn

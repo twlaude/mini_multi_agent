@@ -11,6 +11,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 @dataclass(frozen=True)
 class Settings:
+    parking_dsn: str = os.getenv("PARKING_DSN", "")
     llm_provider: str = os.getenv("LLM_PROVIDER", "mock")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
