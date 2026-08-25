@@ -45,10 +45,11 @@ def _kst(value: datetime | None = None) -> datetime:
 GATE_SCHEMA = {
     "type": "object",
     "properties": {
+        "abnormal_exit": {"type": "boolean"},
         "decision": {"type": "string", "enum": ["open", "deny", "hold"]},
         "reason": {"type": "string"},
     },
-    "required": ["decision", "reason"],
+    "required": ["abnormal_exit", "decision", "reason"],
 }
 NOTE_SCHEMA = {
     "type": "object",
@@ -145,19 +146,27 @@ def _agent_gate(
             f"차량={payload.plate}, 방향={payload.direction}, "
             f"요청시각(KST)={when.isoformat()}\n"
             f"[사전 조사 결과]\n{facts}\n"
-            "위 사실을 근거로 판단하라. 출차인데 '평소보다 2시간 넘게 어긋남' 또는 '심야 여부: 예'면 "
-            "이상 출차 → 음주측정이 pending이거나 없으면 hold, pass면 open, fail이면 deny. "
-            "입차이거나 이상이 없으면 open. reason은 한국어 한 문장으로 근거를 쓴다."
+            "먼저 abnormal_exit를 판단하라: 방향이 exit이고 ('평소보다 2시간 넘게 어긋남' 또는 "
+            "'심야(00~05시) 여부: 예')이면 true, 입차이거나 정상 시간대면 false. "
+            "그 다음 decision: abnormal_exit가 true면 음주측정 pending/없음→hold, pass→open, fail→deny. "
+            "false면 open. reason은 한국어 한 문장으로 근거를 쓴다."
         )},
     ]
     message = _completion(messages, transport, use_tools=False, schema=GATE_SCHEMA)
     content = message.get("content") or ""
     try:
-        data = _normalize_decision(_extract_decision_json(content))
+        raw = _extract_decision_json(content)
+        data = _normalize_decision(raw)
     except Exception as error:
         raise ValueError(f"최종 답 파싱 실패 ({error}): {content[:200]!r}") from error
     data["mode"] = "agent"
     check_id = recent_check["id"] if recent_check else None
+    abnormal = bool(raw.get("abnormal_exit")) and payload.direction == "exit"
+    if abnormal and data["decision"] == "open" and (recent_check or {}).get("status") != "pass":
+        # 라마가 '이상 출차'라고 판단해 놓고 open이라 쓴 경우(3B가 조건 결합을 자주 놓침)
+        # → 라마의 판단(이상)을 집행: 측정 대기. 사유 문장은 라마 것 유지
+        data["decision"] = "hold"
+        data["reason"] = f"{data['reason']} → 이상 출차로 판단, 음주측정 대기"
     if data["decision"] == "hold" and check_id is None:
         # 라마가 hold로 판단 → 측정 요청 생성은 코드가 (판단은 라마 몫)
         check_id = TOOL_FUNCTIONS["request_sobriety_check"](payload.plate, when)["check_id"]
@@ -331,7 +340,9 @@ def agent_note(
     if kind == "외부인":
         guide = "외부인은 등록되지 않은 방문 차량이다. 몇 대가 어느 자리에 언제부터 있는지 말하고, 오래 머문 차량이 있으면 짚어라."
     else:
-        guide = "꼬리물기 의심은 게이트 입차 기록 없이 주차면에 나타난 차량이다. 어느 자리의 어떤 차량인지 말하고 현장 확인을 권하라."
+        guide = ("꼬리물기 의심은 게이트 입차 기록 없이 주차면에 나타난 차량이다. 어느 자리의 어떤 차량인지 "
+                 "전부 나열하고 현장 확인을 권하라. 예: '입차 기록 없이 A-13에 99허9999, A-19에 88허8888이 "
+                 "나타났습니다. 현장 확인이 필요합니다.'")
     facts = "; ".join(
         ", ".join(f"{k}={v}" for k, v in row.items() if v is not None) for row in rows
     ) or "해당 차량 없음"
