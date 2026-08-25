@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 BACKEND_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
-REQUEST_TIMEOUT = 70.0
+REQUEST_TIMEOUT = 130.0
 
 
 class BackendAPIError(Exception):
@@ -23,6 +23,7 @@ def request(
     path: str,
     json: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
+    files: dict[str, tuple[str, bytes, str]] | None = None,
 ) -> Any:
     try:
         response = httpx.request(
@@ -30,6 +31,7 @@ def request(
             f"{BACKEND_URL}{path}",
             json=json,
             params=params,
+            files=files,
             timeout=REQUEST_TIMEOUT,
         )
     except httpx.TimeoutException as error:
@@ -38,7 +40,11 @@ def request(
         raise BackendAPIError("백엔드 서버에 연결할 수 없습니다. 서버 실행 상태를 확인해 주세요.") from error
     if response.is_error:
         try:
-            detail = response.json().get("detail", response.text)
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = payload.get("message") or payload.get("detail") or response.text
+            else:
+                detail = response.text
         except ValueError:
             detail = response.text or "알 수 없는 오류"
         raise BackendAPIError(f"요청에 실패했습니다 ({response.status_code}): {detail}")
