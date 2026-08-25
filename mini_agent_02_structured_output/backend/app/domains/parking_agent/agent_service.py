@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -118,17 +119,17 @@ def _agent_gate(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": (
             f"차량={payload.plate}, 방향={payload.direction}, "
-            f"요청시각(KST)={when.isoformat()}"
+            f"요청시각(KST)={when.isoformat()}\n"
+            f"[사전 조사 결과]\n{_facts_for(payload.plate, when)}\n"
+            "위 사실을 근거로 판단하라. 이상 출차라고 판단하면 request_sobriety_check를 "
+            "호출한 뒤 결과를 반영하고, 그 외엔 툴 없이 바로 최종 JSON을 답하라."
         )},
     ]
     content, _, check_id = _tool_loop(
         messages, when, transport, payload.plate, structured=True
     )
-    start, end = content.find("{"), content.rfind("}")
-    if start < 0 or end < start:
-        raise ValueError(f"최종 JSON 객체를 찾지 못했습니다: {content[:200]!r}")
     try:
-        data = _normalize_decision(json.loads(content[start:end + 1]))
+        data = _normalize_decision(_extract_decision_json(content))
     except Exception as error:
         raise ValueError(f"최종 답 파싱 실패 ({error}): {content[:200]!r}") from error
     data["mode"] = "agent"
@@ -138,6 +139,34 @@ def _agent_gate(
         data["check_id"] = check_id
     decision = AgentGateDecision.model_validate(data)
     return _guard_sobriety_consistency(decision, check_id)
+
+
+def _extract_decision_json(content: str) -> dict[str, Any]:
+    """소형 모델은 JSON을 여러 개 뱉거나 뒤에 설명을 붙인다.
+    → 첫 번째로 온전히 닫히는 JSON 객체를 쓰고, 그것도 깨졌으면 정규식으로 건진다."""
+    decoder = json.JSONDecoder()
+    index = content.find("{")
+    while index >= 0:
+        try:
+            obj, _ = decoder.raw_decode(content, index)
+        except json.JSONDecodeError:
+            index = content.find("{", index + 1)
+            continue
+        if isinstance(obj, dict):
+            if "decision" not in obj and "name" in obj:  # 툴 호출 흉내로 답한 경우
+                obj = {"decision": obj["name"], "reason": str(obj.get("parameters") or "")}
+            return obj
+        index = content.find("{", index + 1)
+    match = re.search(r'"decision"\s*:\s*"([^"]+)"', content)
+    if not match:
+        raise ValueError("JSON도 decision 필드도 없음")
+    reason = re.search(r'"reason"\s*:\s*"([^"]*)"', content)
+    check = re.search(r'"check_id"\s*:\s*(\d+)', content)
+    return {
+        "decision": match.group(1),
+        "reason": reason.group(1) if reason else "",
+        "check_id": int(check.group(1)) if check else None,
+    }
 
 
 DECISION_ALIASES = {
@@ -192,6 +221,35 @@ def _guard_sobriety_consistency(
             "reason": f"{decision.reason} (음주측정 {status} → {fixed} 보정)",
         })
     return decision.model_copy(update={"check_id": check_id})
+def _facts_for(plate: str, when: datetime) -> str:
+    """라마가 툴을 여러 번 돌지 않아도 되게 핵심 사실을 미리 한국어로 정리한다.
+    (조회는 코드가 하고, 판단은 라마가 한다)"""
+    vehicle = TOOL_FUNCTIONS["lookup_vehicle"](plate)
+    history = TOOL_FUNCTIONS["get_exit_history"](plate, when)
+    hours = [e["hour_kst"] for e in history["exits"]]
+    if vehicle["registered"]:
+        reg = f"등록 차량 (소유주 {vehicle['owner_name']}, {vehicle['vehicle_type']})"
+    else:
+        reg = "미등록 차량 (외부인)"
+    if hours:
+        avg = sum(hours) / len(hours)
+        hist = f"최근 30일 출차 {len(hours)}건, 평소 출차 시각 평균 {avg:.1f}시 (예: {hours[:5]}시)"
+    else:
+        hist = "최근 30일 출차 이력 없음"
+    with get_conn() as conn:
+        check = conn.execute(
+            """select id, status from sobriety_checks
+               where plate = %s and requested_at between %s - interval '1 hour' and %s
+               order by requested_at desc, id desc limit 1""",
+            (plate, when, when),
+        ).fetchone()
+    check_text = (
+        f"최근 1시간 음주측정: id={check['id']} 상태={check['status']}"
+        if check else "최근 1시간 음주측정 요청 없음"
+    )
+    return f"- {reg}\n- {hist}\n- 현재 KST {when.hour:02d}시 {when.minute:02d}분\n- {check_text}"
+
+
 def _record_gate(
     payload: AgentGateRequest, decision: AgentGateDecision, when: datetime,
 ) -> None:

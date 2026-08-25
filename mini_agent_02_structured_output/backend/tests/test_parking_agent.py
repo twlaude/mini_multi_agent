@@ -250,3 +250,15 @@ def test_normalize_decision_accepts_loose_model_output() -> None:
     import pytest
     with pytest.raises(ValueError):
         n({"decision": "maybe", "reason": "x"})
+
+
+def test_extract_decision_json_handles_messy_small_model_output() -> None:
+    x = agent_service._extract_decision_json
+    multi = '{"decision": "open", "reason": "ok"} \n\n만약 \n\n{"decision": "deny", "reason": "x"}'
+    assert x(multi)["decision"] == "open"
+    assert x('{"name": "open", "parameters": {}}')["decision"] == "open"
+    broken = '{"decision":"hold","reason":"대기","check_id":35," plate":12가3456}'
+    assert x(broken) == {"decision": "hold", "reason": "대기", "check_id": 35}
+    import pytest
+    with pytest.raises(ValueError):
+        x("그냥 문장")
