@@ -64,32 +64,36 @@ def status_panel() -> None:
 status_panel()
 
 st.divider()
-st.subheader("워크플로우와 Agent 비교")
-mode = st.radio(
-    "판단 방식", ["workflow", "agent"], horizontal=True, format_func=lambda v: v.upper()
-)
+st.subheader("Agent 차량 점검")
+st.caption("Ollama 장애 시 백엔드가 자동으로 workflow 규칙으로 폴백합니다.")
 left, right = st.columns(2)
 with left:
     if st.button("외부인 차량 조회", use_container_width=True):
         try:
-            st.session_state.parking_visitors = get_visitors(mode)
+            st.session_state.parking_visitors = get_visitors()
         except BackendAPIError as error:
             st.error(str(error))
     if "parking_visitors" in st.session_state:
+        visitors = st.session_state.parking_visitors
+        if isinstance(visitors, dict) and visitors.get("agent_note"):
+            st.info(visitors["agent_note"])
         st.dataframe(
-            as_items(st.session_state.parking_visitors, "visitors"),
+            as_items(visitors, "items"),
             use_container_width=True,
             hide_index=True,
         )
 with right:
     if st.button("꼬리물기 점검", use_container_width=True):
         try:
-            st.session_state.parking_tailgating = get_tailgating(mode)
+            st.session_state.parking_tailgating = get_tailgating()
         except BackendAPIError as error:
             st.error(str(error))
     if "parking_tailgating" in st.session_state:
+        tailgating = st.session_state.parking_tailgating
+        if isinstance(tailgating, dict) and tailgating.get("agent_note"):
+            st.info(tailgating["agent_note"])
         st.dataframe(
-            as_items(st.session_state.parking_tailgating, "tailgating", "alerts"),
+            as_items(tailgating, "items"),
             use_container_width=True,
             hide_index=True,
         )

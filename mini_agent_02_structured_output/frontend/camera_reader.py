@@ -34,9 +34,9 @@ def recognize(reader: Any, frame: Any, confidence: float) -> str | None:
     return plate_from_results(reader.readtext(frame, detail=1), confidence)
 
 
-def send_gate(plate: str, mode: str, direction: str) -> tuple[str, str]:
+def send_gate(plate: str, direction: str) -> tuple[str, str]:
     try:
-        result = submit_gate(plate, direction, mode)
+        result = submit_gate(plate, direction)
         return str(result.get("decision", "unknown")), str(result.get("reason", ""))
     except (BackendAPIError, ValueError) as error:
         return "error", str(error)
@@ -52,7 +52,7 @@ def run_image(args: Any, reader: Any) -> int:
     if not plate:
         print("번호판 형식을 찾지 못했습니다.")
         return 2
-    decision, reason = send_gate(plate, args.mode, args.direction)
+    decision, reason = send_gate(plate, args.direction)
     print(f"인식 번호: {plate} | decision={decision} | reason={reason}")
     cv2.putText(frame, f"{plate} / {decision}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
     cv2.imshow("Parking plate reader", frame)
@@ -88,7 +88,7 @@ def run_camera(args: Any, reader: Any) -> int:
 
             now = time.monotonic()
             if plate and consecutive >= 3 and now >= cooldowns.get(plate, 0):
-                decision, reason = send_gate(plate, args.mode, args.direction)
+                decision, reason = send_gate(plate, args.direction)
                 cooldowns[plate] = now + 30
                 display_message = f"{plate} / {decision}"
                 print(f"인식 번호: {plate} | decision={decision} | reason={reason}")
@@ -105,7 +105,6 @@ def run_camera(args: Any, reader: Any) -> int:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="주차장 번호판 OCR 리더")
-    parser.add_argument("--mode", choices=["workflow", "agent"], default="workflow")
     parser.add_argument("--direction", choices=["enter", "exit"], default="enter")
     parser.add_argument("--camera", type=int, default=0, help="웹캠 장치 번호")
     parser.add_argument("--image", help="웹캠 대신 사용할 이미지 파일")

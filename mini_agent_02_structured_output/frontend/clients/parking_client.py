@@ -5,7 +5,6 @@ from typing import Any, Literal
 from core.api_client import BackendAPIError, request
 
 
-Mode = Literal["workflow", "agent"]
 Direction = Literal["enter", "exit"]
 SpotEvent = Literal["occupied", "vacated"]
 SobrietyResult = Literal["pass", "fail"]
@@ -35,24 +34,37 @@ def get_parking_status() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def get_visitors(mode: Mode) -> Any:
-    selected = _validate(mode, {"workflow", "agent"}, "mode")
-    return _unwrap(request("GET", f"/parking/{selected}/visitors"))
+def get_visitors() -> Any:
+    return _unwrap(request("GET", "/parking/agent/visitors"))
 
 
-def get_tailgating(mode: Mode) -> Any:
-    selected = _validate(mode, {"workflow", "agent"}, "mode")
-    return _unwrap(request("GET", f"/parking/{selected}/tailgating"))
+def get_tailgating() -> Any:
+    return _unwrap(request("GET", "/parking/agent/tailgating"))
 
 
-def submit_gate(plate: str, direction: Direction, mode: Mode) -> dict[str, Any]:
-    selected_mode = _validate(mode, {"workflow", "agent"}, "mode")
+def submit_gate(
+    plate: str, direction: Direction, at: str | None = None
+) -> dict[str, Any]:
     selected_direction = _validate(direction, {"enter", "exit"}, "direction")
+    payload = {"plate": plate.strip(), "direction": selected_direction}
+    if at:
+        payload["at"] = at
     data = _unwrap(
         request(
             "POST",
-            f"/parking/{selected_mode}/gate",
-            json={"plate": plate.strip(), "direction": selected_direction},
+            "/parking/agent/gate",
+            json=payload,
+        )
+    )
+    return data if isinstance(data, dict) else {}
+
+
+def recognize_plate(filename: str, content: bytes, content_type: str) -> dict[str, Any]:
+    data = _unwrap(
+        request(
+            "POST",
+            "/parking/plate/recognize",
+            files={"image": (filename, content, content_type)},
         )
     )
     return data if isinstance(data, dict) else {}

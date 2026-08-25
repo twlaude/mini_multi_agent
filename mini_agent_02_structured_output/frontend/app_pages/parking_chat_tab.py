@@ -15,6 +15,8 @@ if "parking_chat_messages" not in st.session_state:
 for message in st.session_state.parking_chat_messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
+        if message.get("tool_calls"):
+            st.caption("사용 도구: " + ", ".join(message["tool_calls"]))
 
 question = st.chat_input("예: 지금 외부인 누구 있어?")
 if question:
@@ -24,11 +26,16 @@ if question:
     with st.chat_message("assistant"):
         try:
             with st.spinner("관제 Agent가 확인하고 있습니다..."):
-                answer = answer_text(ask_agent(question))
+                result = ask_agent(question)
+                answer = answer_text(result)
+                tool_calls = result.get("tool_calls", []) if isinstance(result, dict) else []
             st.write(answer)
+            if tool_calls:
+                st.caption("사용 도구: " + ", ".join(tool_calls))
         except BackendAPIError as error:
             answer = f"백엔드 연결 오류: {error}"
+            tool_calls = []
             st.error(answer)
     st.session_state.parking_chat_messages.append(
-        {"role": "assistant", "content": answer}
+        {"role": "assistant", "content": answer, "tool_calls": tool_calls}
     )
