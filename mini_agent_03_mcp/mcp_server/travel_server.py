@@ -6,7 +6,10 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 
-MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+
+
+
+MCP_HOST = os.getenv("MCP_HOST", "192.100.200.192")
 MCP_PORT = int(os.getenv("MCP_PORT", "8010"))
 
 mcp = FastMCP(

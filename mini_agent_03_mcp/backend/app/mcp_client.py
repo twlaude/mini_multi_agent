@@ -18,6 +18,10 @@ MCP_SERVERS: dict[str, dict[str, Any]] = {
         "transport": "streamable-http",
         "url": os.getenv("TRAVEL_MCP_URL", "http://127.0.0.1:8010/mcp"),
     },
+    "naver_index": {
+        "transport": "streamable-http",
+        "url": os.getenv("NAVER_INDEX_MCP_URL", "http://127.0.0.1:8020/mcp"),
+    },
     "policy": {
         "transport": "stdio",
         "command": sys.executable,
