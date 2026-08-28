@@ -20,9 +20,10 @@ from urllib.request import Request, urlopen
 
 from app.clients.base import AccommodationClient, SearchPage
 from app.core.config import HotelSettings
-from app.schemas import Hotel, RoomOption
+from app.schemas import Hotel, PolicySection, RoomOption
+from app.services.dates import default_dates
 
-from .parser import extract_build_id, parse_room_options, parse_search_page
+from .parser import extract_build_id, parse_policy_sections, parse_room_options, parse_search_page
 
 
 # 숙소 유형 한글 이름 → 여기어때 검색 쿼리의 category 코드 (2026-08-27 실측: 1=모텔 2=호텔 3=펜션 5=캠핑, 없으면 전체)
@@ -109,3 +110,8 @@ class YeogiClient(AccommodationClient):
         return parse_room_options(
             self.detail(accommodation_id, check_in, check_out, personal), accommodation_id
         )
+
+    def policy_sections(self, accommodation_id: int) -> tuple[str, str, list[PolicySection]]:
+        """오늘부터 1박 기준 상세에서 이름·주소와 규정 섹션을 추출한다."""
+        check_in, check_out = default_dates("", "")
+        return parse_policy_sections(self.detail(accommodation_id, check_in, check_out))

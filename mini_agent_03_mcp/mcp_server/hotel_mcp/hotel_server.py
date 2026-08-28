@@ -4,10 +4,11 @@ travel_server.py 와 같은 방식(FastMCP + streamable-http)이지만 mock 데�
 **진짜 여기어때 검색 결과**를 돌려줍니다. 이 파일은 서버를 만들고 ``app/tools`` 의 Tool/Resource 를
 등록하는 진입점일 뿐이고, 로직은 전부 ``app/`` 패키지 안에 있습니다 (README 의 구조 참고).
 
-Tool 3개 (모두 인증 불필요)
+Tool 4개 (모두 인증 불필요)
     1. search_accommodations   지역 키워드+날짜(+최대 가격) → 숙소 목록
     2. get_room_options        숙소 id+날짜 → 객실별 대실/숙박 옵션·재고
     3. make_checkout_link      숙소 id+객실 id → 결제 직전 페이지 URL (결제는 하지 않음)
+    4. get_hotel_policy        숙소 id+질문 → 해당 호텔의 규정 근거 청크
 
 실행
     python hotel_server.py
@@ -33,7 +34,7 @@ if str(SERVER_ROOT) not in sys.path:
 from mcp.server.fastmcp import FastMCP
 
 from app.core.config import get_settings
-from app.tools import checkout, resources, rooms, search
+from app.tools import checkout, policy, resources, rooms, search
 
 
 settings = get_settings()
@@ -55,7 +56,8 @@ mcp = FastMCP(
 search.register(mcp)      # search_accommodations
 rooms.register(mcp)       # get_room_options
 checkout.register(mcp)    # make_checkout_link
-resources.register(mcp)   # yeogi://sort-types, yeogi://today
+policy.register(mcp)      # get_hotel_policy
+resources.register(mcp)   # yeogi://sort-types, yeogi://today, yeogi://policy-stats
 
 
 if __name__ == "__main__":

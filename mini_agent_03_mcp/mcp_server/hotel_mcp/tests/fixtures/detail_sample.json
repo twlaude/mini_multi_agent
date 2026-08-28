@@ -1,0 +1,35 @@
+{
+  "accommodationInfo": {
+    "meta": {
+      "name": "부산 샘플 호텔",
+      "address": "부산광역시 해운대구 샘플로 1"
+    },
+    "details": [
+      {
+        "title": "기본정보",
+        "contents": [
+          "체크인 : 15:00 | 체크아웃 : 11:00",
+          "<font color=\"#e55\">주차 가능</font>",
+          "   "
+        ]
+      },
+      {
+        "title": "인원 추가 정보",
+        "contents": [
+          "기준 인원 외 추가 요금은 현장 결제입니다."
+        ]
+      },
+      {
+        "title": "빈 섹션",
+        "contents": ["", "<br>"]
+      }
+    ],
+    "theme": {
+      "items": [
+        {"name": "와이파이"},
+        {"name": "<b>피트니스</b>"},
+        {"name": ""}
+      ]
+    }
+  }
+}

@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import BaseModel
 
-from app.schemas import Hotel, RoomOption
+from app.schemas import Hotel, PolicySection, RoomOption
 
 
 class SearchPage(BaseModel):
@@ -29,3 +29,7 @@ class AccommodationClient(ABC):
     def room_options(self, accommodation_id: int, check_in: str, check_out: str,
                      personal: int = 2) -> list[RoomOption]:
         """숙소 한 곳의 해당 날짜 객실 × (대실/숙박) 옵션."""
+
+    @abstractmethod
+    def policy_sections(self, accommodation_id: int) -> tuple[str, str, list[PolicySection]]:
+        """숙소 이름·주소와 정제된 규정 섹션을 반환."""

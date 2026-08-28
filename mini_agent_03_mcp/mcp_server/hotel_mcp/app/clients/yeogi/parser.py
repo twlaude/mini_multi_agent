@@ -1,10 +1,35 @@
 """여기어때 원본 JSON/HTML → Schema 변환. 네트워크를 전혀 쓰지 않으므로 단독 테스트가 가능합니다."""
 
+import html
 import re
 from typing import Any
 
 from app.clients.base import SearchPage
-from app.schemas import RENT, STAY, Hotel, RoomOption
+from app.schemas import RENT, STAY, Hotel, PolicySection, RoomOption
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def _clean_policy_text(value: Any) -> str:
+    """규정 문자열의 HTML 태그와 불필요한 공백을 제거한다."""
+    if not isinstance(value, str):
+        return ""
+    without_tags = _HTML_TAG_RE.sub(" ", value)
+    return " ".join(html.unescape(without_tags).split())
+
+
+def _address_text(value: Any) -> str:
+    """상세 meta.address의 문자열/객체 변형을 한 문자열로 정규화한다."""
+    if isinstance(value, str):
+        return _clean_policy_text(value)
+    if not isinstance(value, dict):
+        return ""
+    for key in ("roadAddress", "address", "fullAddress", "text", "traffic"):
+        cleaned = _clean_policy_text(value.get(key))
+        if cleaned:
+            return cleaned
+    return ""
 
 
 def extract_build_id(html: str) -> str:
@@ -52,6 +77,40 @@ def parse_search_page(page_props: dict[str, Any], base_url: str) -> SearchPage:
     items = [parse_hotel(a, base_url) for a in (page_props.get("accommodationsData") or [])]
     total = (page_props.get("paginationInfo") or {}).get("totalPageCount") or 1
     return SearchPage(items=items, total_pages=total)
+
+
+def parse_policy_sections(
+    detail: dict[str, Any],
+) -> tuple[str, str, list[PolicySection]]:
+    """상세 pageProps에서 이름·주소와 규정/편의시설 텍스트만 추출한다."""
+    info = detail.get("accommodationInfo") or {}
+    meta = info.get("meta") or {}
+    hotel_name = _clean_policy_text(meta.get("name") or info.get("name"))
+    address = _address_text(meta.get("address") or meta.get("roadAddress"))
+
+    sections: list[PolicySection] = []
+    for raw_section in info.get("details") or []:
+        if not isinstance(raw_section, dict):
+            continue
+        title = _clean_policy_text(raw_section.get("title"))
+        contents = [
+            cleaned
+            for item in (raw_section.get("contents") or [])
+            if (cleaned := _clean_policy_text(item))
+        ]
+        if title and contents:
+            sections.append(PolicySection(title=title, contents=contents))
+
+    theme = info.get("theme") or {}
+    theme_names = [
+        cleaned
+        for item in (theme.get("items") or [])
+        if isinstance(item, dict) and (cleaned := _clean_policy_text(item.get("name")))
+    ]
+    if theme_names:
+        sections.append(PolicySection(title="편의시설", contents=theme_names))
+
+    return hotel_name, address, sections
 
 
 def parse_max_hours(label: str | None) -> int | None:

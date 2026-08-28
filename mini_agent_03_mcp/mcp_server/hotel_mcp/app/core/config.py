@@ -26,6 +26,10 @@ class HotelSettings:
     user_agent: str
     request_timeout: int  # HTTP 요청 제한 시간(초)
     page_delay: float     # 페이지 넘길 때 쉬는 시간(초, 차단 방지)
+    database_url: str
+    embedding_provider: str
+    embedding_model: str
+    ollama_base_url: str
 
 
 def get_settings() -> HotelSettings:
@@ -42,6 +46,17 @@ def get_settings() -> HotelSettings:
     if not 1 <= mcp_port <= 65_535:
         raise ValueError("HOTEL_MCP_PORT는 1~65535 범위여야 합니다.")
 
+    embedding_provider = os.getenv("HOTEL_EMBEDDING_PROVIDER", "openai").strip().lower()
+    if embedding_provider not in {"openai", "ollama"}:
+        raise ValueError("HOTEL_EMBEDDING_PROVIDER는 openai 또는 ollama여야 합니다.")
+
+    default_embedding_model = (
+        "text-embedding-3-small" if embedding_provider == "openai" else "embeddinggemma"
+    )
+    embedding_model = (
+        os.getenv("HOTEL_EMBEDDING_MODEL", "").strip() or default_embedding_model
+    )
+
     return HotelSettings(
         mcp_host=os.getenv("HOTEL_MCP_HOST", "0.0.0.0").strip(),
         mcp_port=mcp_port,
@@ -52,4 +67,13 @@ def get_settings() -> HotelSettings:
         user_agent=os.getenv("YEOGI_USER_AGENT", DEFAULT_USER_AGENT),
         request_timeout=request_timeout,
         page_delay=page_delay,
+        database_url=os.getenv(
+            "DATABASE_URL",
+            "postgresql://agent_user:agent_password@127.0.0.1:5432/agent_db",
+        ).strip(),
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+        ollama_base_url=os.getenv(
+            "OLLAMA_BASE_URL", "http://127.0.0.1:11434"
+        ).rstrip("/"),
     )

@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.clients import AccommodationClient, SearchPage  # noqa: E402
 from app.clients.yeogi.parser import parse_hotel, parse_room_options  # noqa: E402
+from app.schemas import PolicySection  # noqa: E402
 
 # 여기어때 응답 축약본
 SAMPLE_ACCOMMODATION = {
@@ -61,6 +62,14 @@ class FakeClient(AccommodationClient):
 
     def room_options(self, accommodation_id, check_in, check_out, personal=2):
         return parse_room_options(SAMPLE_DETAIL, accommodation_id)
+
+    def policy_sections(self, accommodation_id):
+        self.calls.append({"policy": accommodation_id})
+        return (
+            "테스트 호텔",
+            "서울특별시 테스트구 테스트로 1",
+            [PolicySection(title="기본정보", contents=["체크인 15:00", "주차 가능"])],
+        )
 
 
 @pytest.fixture
