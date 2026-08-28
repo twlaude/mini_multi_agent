@@ -7,14 +7,14 @@ import streamlit as st
 BASE_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
-def get(path: str) -> dict:
-    response = httpx.get(f"{BASE_URL}{path}", timeout=30)
+def get(path: str, params: dict | None = None) -> dict:
+    response = httpx.get(f"{BASE_URL}{path}", params=params, timeout=30)
     response.raise_for_status()
     return response.json()
 
 
 def post(path: str, payload: dict) -> dict:
-    response = httpx.post(f"{BASE_URL}{path}", json=payload, timeout=60)
+    response = httpx.post(f"{BASE_URL}{path}", json=payload, timeout=120)
     response.raise_for_status()
     return response.json()
 
@@ -22,7 +22,7 @@ def post(path: str, payload: dict) -> dict:
 st.set_page_config(page_title="Mini Agent 03 MCP", page_icon="🔌", layout="wide")
 st.title("Mini Agent 03 · MCP")
 st.caption(
-    "FastAPI가 Streamable HTTP와 stdio MCP Server의 Tool을 발견하고 "
+    "FastAPI가 5팀 MCP Server 3개(숙소·관광지·날씨)의 Tool을 발견하고 "
     "순차 Agent Loop로 호출합니다."
 )
 
@@ -36,8 +36,8 @@ try:
         )
 except httpx.HTTPError:
     st.warning(
-        "MCP Server에 연결할 수 없습니다. Travel 서버가 8010 포트에서 "
-        "실행 중인지 확인하세요."
+        "MCP Server에 연결할 수 없습니다. hotel(8030)·tour_spot(8040)·"
+        "weather(8050) 서버가 모두 실행 중인지 확인하세요."
     )
 
 if st.button("MCP Tool 발견"):
@@ -48,7 +48,7 @@ if st.button("MCP Tool 발견"):
 
 question = st.text_input(
     "질문",
-    "부산 날씨와 15만원 이하 호텔을 찾고, 검색된 호텔의 정책도 알려 주세요.",
+    "서울 현재 날씨 알려주고, 부산 관광지 3곳이랑 부산 호텔 중 15만원 이하 3곳 추천해줘.",
 )
 if st.button("MCP Agent 실행", type="primary"):
     try:
@@ -77,8 +77,13 @@ if st.button("MCP Agent 실행", type="primary"):
         st.error(f"Backend 호출 실패: {error}")
 
 with st.expander("MCP Resource 확인"):
-    if st.button("수하물 정책 읽기"):
+    if st.button("Resource 목록"):
         try:
-            st.json(get("/api/mcp/baggage-policy"))
+            st.json(get("/api/mcp/resources"))
+        except httpx.HTTPError as error:
+            st.error(f"Backend 호출 실패: {error}")
+    if st.button("오늘 날짜 읽기 (hotel · yeogi://today)"):
+        try:
+            st.json(get("/api/mcp/resource", {"server": "hotel", "uri": "yeogi://today"}))
         except httpx.HTTPError as error:
             st.error(f"Backend 호출 실패: {error}")

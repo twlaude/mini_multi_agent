@@ -1,5 +1,4 @@
 import os
-import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -13,19 +12,23 @@ from mcp.client.streamable_http import streamable_http_client
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
+# 5팀 MCP 서버 3개 (mcp_server/ 아래 각 폴더에서 독립 실행되는 Streamable HTTP 서버)
+#   hotel      여기어때 숙소 검색·객실·결제 링크   :8030
+#   tour_spot  한국관광공사 관광지 검색            :8040
+#   weather    기상청 현재 날씨·주간 예보          :8050
+# 교재 예제(travel_server.py / policy_stdio_server.py)는 mock 데이터라 등록하지 않는다.
 MCP_SERVERS: dict[str, dict[str, Any]] = {
-    "travel": {
+    "hotel": {
         "transport": "streamable-http",
-        "url": os.getenv("TRAVEL_MCP_URL", "http://127.0.0.1:8010/mcp"),
+        "url": os.getenv("HOTEL_MCP_URL", "http://127.0.0.1:8030/mcp"),
     },
-    "naver_index": {
+    "tour_spot": {
         "transport": "streamable-http",
-        "url": os.getenv("NAVER_INDEX_MCP_URL", "http://127.0.0.1:8020/mcp"),
+        "url": os.getenv("TOUR_SPOT_MCP_URL", "http://127.0.0.1:8040/mcp"),
     },
-    "policy": {
-        "transport": "stdio",
-        "command": sys.executable,
-        "args": [str(PROJECT_ROOT / "mcp_server" / "policy_stdio_server.py")],
+    "weather": {
+        "transport": "streamable-http",
+        "url": os.getenv("WEATHER_MCP_URL", "http://127.0.0.1:8050/mcp"),
     },
 }
 
@@ -111,6 +114,8 @@ async def discover_resources() -> list[dict[str, Any]]:
 
 
 async def read_resource(server_name: str, uri: str) -> str:
+    if server_name not in MCP_SERVERS:
+        raise ValueError(f"등록되지 않은 MCP Server입니다: {server_name}")
     async with mcp_sessions() as sessions:
         response = await sessions[server_name].read_resource(uri)
         return "\n".join(

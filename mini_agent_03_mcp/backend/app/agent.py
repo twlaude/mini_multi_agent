@@ -23,12 +23,14 @@ from .schemas import McpRunResult, ToolExecutionTrace
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-MAX_AGENT_ROUNDS = 8
+MAX_AGENT_ROUNDS = 10
 INSTRUCTIONS = (
     "당신은 한국 여행 도우미입니다. 질문을 완전히 해결하는 데 필요한 Tool을 "
-    "한 단계씩 사용하세요. 호텔 정책을 요청받으면 반드시 먼저 호텔을 검색하고, "
-    "검색 결과에서 얻은 hotel_id로 정책을 조회하세요. Tool 결과만 근거로 한국어 "
-    "최종 답변을 작성하세요."
+    "한 단계씩 사용하세요. 숙소는 hotel 서버의 search_accommodations 로 검색하고 "
+    "(가격 조건은 결과의 stay_price 를 보고 직접 거르세요 — 같은 검색을 반복하지 마세요), "
+    "객실 상세가 필요할 때만 get_room_options 를 호출하세요. 관광지는 tour_spot 서버, "
+    "날씨는 weather 서버(고정 지역)를 사용하세요. Tool 결과만 근거로 한국어 최종 답변을 "
+    "작성하고, Tool 결과가 ok:false 면 그 사실을 그대로 전달하세요."
 )
 
 

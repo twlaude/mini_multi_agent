@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from .agent import run_agent
 from .mcp_client import MCP_SERVERS, discover_resources, discover_tools, read_resource
@@ -59,11 +59,17 @@ async def list_mcp_resources():
         raise HTTPException(status_code=503, detail=f"MCP Resource 발견 실패: {error}") from error
 
 
-@app.get("/api/mcp/baggage-policy")
-async def baggage_policy():
+@app.get("/api/mcp/resource")
+async def get_mcp_resource(
+    server: str = Query(description="MCP Server 이름 (예: hotel)"),
+    uri: str = Query(description="Resource URI (예: yeogi://today)"),
+):
+    """Tool이 아닌 MCP Resource를 읽습니다. (예: hotel 서버의 yeogi://today)"""
     try:
-        content = await read_resource("travel", "travel://policy/baggage")
-        return {"uri": "travel://policy/baggage", "content": content}
+        content = await read_resource(server, uri)
+        return {"server": server, "uri": uri, "content": content}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"MCP Resource 읽기 실패: {error}") from error
 

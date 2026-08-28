@@ -1,0 +1,6 @@
+mcp>=1.10,<2
+python-dotenv>=1.0
+pydantic>=2.0
+
+# 테스트용 (python -m pytest -q tests)
+pytest>=8

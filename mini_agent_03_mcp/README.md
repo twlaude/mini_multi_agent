@@ -4,248 +4,139 @@
 FastAPI Backend는 Tool 함수를 직접 import하지 않고 MCP Client를 통해 Tool을 발견하고
 호출합니다.
 
+교재의 mock 서버(`travel_server.py`·`policy_stdio_server.py`) 대신 **5팀이 만든
+실제 MCP Server 3개**를 `mcp_server/` 아래에 두고 Backend에 등록했습니다.
+
 ```text
 Streamlit :8501
   → FastAPI Backend :8000
-    → Travel MCP Server :8010/mcp (Streamable HTTP)
-    → Policy MCP Server (stdio 자식 프로세스)
+    → hotel     MCP Server :8030/mcp  여기어때 숙소 검색·객실·결제 링크 (Streamable HTTP)
+    → tour_spot MCP Server :8040/mcp  한국관광공사 관광지 검색           (Streamable HTTP)
+    → weather   MCP Server :8050/mcp  기상청 현재 날씨·주간 예보         (Streamable HTTP)
     → OpenAI Responses API가 한 번에 Tool 하나를 선택
       → Tool 결과를 돌려주고 필요한 만큼 반복
 ```
 
-Travel Server는 Backend와 독립된 프로세스와 포트에서 실행합니다. Policy Server는
-Backend가 stdio 자식 프로세스로 실행합니다. 하나의 Agent가 두 Transport를 함께
-사용하면서 Server prefix와 라우팅, 순차 Tool 의존성을 학습합니다.
+세 MCP Server는 Backend와 독립된 프로세스와 포트에서 실행합니다. Frontend는 MCP
+Server를 직접 호출하지 않습니다. 사용자의 요청은 항상 Agent Backend를 거치며, GPT가
+Tool을 제안하고 Backend가 MCP 호출·결과 전달을 담당합니다.
 
-## stdio 학습 예제에서 달라지는 점
-
-Tool 구현과 MCP의 `tools/list`·`tools/call` 의미는 바뀌지 않습니다. 달라지는 것은
-Server의 실행 주체와 메시지를 전달하는 Transport입니다.
-
-| 구분 | Policy MCP | Travel MCP |
-| --- | --- | --- |
-| Transport | stdio | Streamable HTTP |
-| Server 실행 | Backend가 자식 프로세스로 자동 실행 | 첫 번째 터미널에서 독립 실행 |
-| 주소 | Python 파일과 실행 명령 | `http://127.0.0.1:8010/mcp` |
-| 포트 | 없음 | 8010 |
-| Server 수명 | Client Session과 함께 종료 | Backend와 무관하게 계속 실행 |
-| 제공 Tool | 호텔 정책 조회 | 날씨·호텔 검색 |
+## 폴더 구조
 
 ```text
-stdio
-Backend → 자식 MCP Server
-
-Streamable HTTP
-Backend :8000 → 네트워크 → MCP Server :8010
+mini_agent_03_mcp/
+├── backend/app/
+│   ├── main.py            FastAPI 엔드포인트
+│   ├── mcp_client.py      MCP_SERVERS 등록표 + Session 생성 (hotel / tour_spot / weather)
+│   ├── agent.py           Tool prefix·라우팅과 순차 Agent Loop
+│   └── schemas.py
+├── frontend/app.py        Streamlit
+├── mcp_server/
+│   ├── hotel_mcp/         형 — 여기어때 (hotel_server.py, app/ core·schemas·clients·services·tools, tests/)
+│   ├── tour_spot_mcp/     오현님 — 한국관광공사 TourAPI (tour_spot_server.py, tour_spot/)
+│   ├── weather_mcp/       인혜님 — 기상청 (weather_server.py 단일 파일)
+│   ├── travel_server.py   교재 mock (미등록, 참고용)
+│   └── policy_stdio_server.py 교재 stdio mock (미등록, 참고용)
+└── .env                   Backend가 읽는 MCP URL + OpenAI 키
 ```
 
-Frontend는 MCP Server를 직접 호출하지 않습니다. 사용자의 요청은 항상 Agent
-Backend를 거치며, GPT가 Tool을 제안하고 Backend가 권한 확인·MCP 호출·결과 전달을
-담당합니다. GPT는 MCP Tool을 직접 실행하지 않습니다.
+각 MCP Server 폴더는 제출물 그대로이며 **자기 폴더의 `.env`** 를 읽습니다
+(`hotel_mcp/.env`, `tour_spot_mcp/.env`, `weather_mcp/.env`). 프로젝트 루트 `.env`는
+Backend·Frontend 전용입니다.
 
-## 제공 기능
+## 제공 Tool (총 6개)
+
+| Server | Tool | 설명 |
+| --- | --- | --- |
+| hotel | `search_accommodations` | 키워드·날짜·카테고리로 숙소 검색 (가격 필터 없음 — AI가 판별) |
+| hotel | `get_room_options` | 숙소 id → 객실별 대실/숙박 옵션·재고 |
+| hotel | `make_checkout_link` | 숙소 id + 객실 id → 결제 직전 URL (결제는 안 함) |
+| tour_spot | `search_tour_spots` | 국내 지역명 → 관광지 목록 |
+| weather | `get_current_weather` | 고정 지역(.env) 현재 날씨 |
+| weather | `get_weekly_forecast` | 고정 지역 7일 예보 |
+
+Resource: `yeogi://sort-types`, `yeogi://today` (hotel)
+
+## 제공 API
 
 - `GET /health`: Backend 상태
-- `GET /api/mcp/status`: 별도 MCP Server 연결 상태
-- `GET /api/mcp/tools`: MCP Server가 공개한 Tool 발견
-- `GET /api/mcp/resources`: MCP Resource 발견
+- `GET /api/mcp/status`: MCP Server 3개 연결 상태 (하나라도 죽으면 503)
+- `GET /api/mcp/tools`: Tool 발견
+- `GET /api/mcp/resources`: Resource 발견
+- `GET /api/mcp/resource?server=hotel&uri=yeogi://today`: Resource 읽기
 - `POST /api/mcp/run`: 질문 → Tool 선택 → MCP 호출 → 답변 Trace
-- `GET /api/mcp/baggage-policy`: MCP Resource 읽기
 
-## 실습 및 실행 순서
+## 실행 순서 (macOS, 로컬 전부)
 
-세 프로세스의 실행 순서를 지킵니다. 앞 단계가 정상인지 확인한 뒤 다음 단계로
-이동하면 어느 연결에서 문제가 발생했는지 쉽게 구분할 수 있습니다.
+터미널 5개. 모두 이 폴더(`mini_agent_03_mcp`)에서 시작합니다.
 
-```text
-0. 구조 확인
-→ 1. 가상환경 준비
-→ 2. OpenAI 환경변수 설정
-→ 3. MCP Server 실행 (:8010)
-→ 4. Backend 실행 (:8000)
-→ 5. Backend에서 MCP 연결 확인
-→ 6. GPT·Tool·Resource API 확인
-→ 7. Frontend 실행 (:8501)
-→ 8. 화면에서 전체 Trace 확인
+```bash
+cd ~/class_personal_projects/mini_multi_agent/mini_agent_03_mcp
+source .venv/bin/activate
 ```
 
-### 0단계 · 호출 구조 확인
+```bash
+# 1  hotel MCP  :8030
+python mcp_server/hotel_mcp/hotel_server.py
 
-코드를 실행하기 전에 다음 네 파일의 역할을 확인합니다.
+# 2  tour_spot MCP  :8040
+python mcp_server/tour_spot_mcp/tour_spot_server.py
 
-| 파일 | 역할 |
-| --- | --- |
-| `mcp_server/travel_server.py` | 날씨·호텔 Tool과 Resource를 공개하는 HTTP Server |
-| `mcp_server/policy_stdio_server.py` | 호텔 ID로 정책을 조회하는 stdio Server |
-| `backend/app/mcp_client.py` | 두 Transport의 Session을 생성·관리하는 Client |
-| `backend/app/agent.py` | Tool prefix·라우팅과 순차 Agent Loop 관리 |
+# 3  weather MCP  :8050
+python mcp_server/weather_mcp/weather_server.py
 
-### 1단계 · 가상환경과 패키지 준비
+# 4  Backend  :8000
+uvicorn backend.app.main:app --reload --port 8000
 
-최초 한 번만 실행합니다.
-
-```powershell
-cd C:\mini_agent_st\mini_agent_03_mcp
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+# 5  Frontend  :8501
+streamlit run frontend/app.py --server.port 8501
 ```
 
-이미 `.venv`를 만들었다면 다음 수업부터는 활성화만 합니다.
+확인:
 
-```powershell
-cd C:\mini_agent_st\mini_agent_03_mcp
-.\.venv\Scripts\Activate.ps1
+```bash
+curl -s http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:8000/api/mcp/status          # status=connected, tool_count=6
+curl -s http://127.0.0.1:8000/api/mcp/tools | python -m json.tool
+curl -s -X POST http://127.0.0.1:8000/api/mcp/run -H 'Content-Type: application/json' \
+  -d '{"question":"서울 현재 날씨랑 부산 관광지 3곳, 부산 호텔 15만원 이하 3곳 추천해줘"}'
 ```
 
-### 2단계 · OpenAI 환경변수 설정
+브라우저: `http://127.0.0.1:8501` / Swagger `http://127.0.0.1:8000/docs`
 
-`.env.example`을 `.env`로 복사하고 발급받은 API Key를 입력합니다.
+종료는 Frontend → Backend → MCP Server 순으로 각 터미널에서 `Ctrl+C`.
 
-```powershell
-Copy-Item .env.example .env
-```
+## 환경변수
+
+루트 `.env` (Backend·Frontend):
 
 ```env
+BACKEND_API_URL=http://127.0.0.1:8000
+HOTEL_MCP_URL=http://127.0.0.1:8030/mcp
+TOUR_SPOT_MCP_URL=http://127.0.0.1:8040/mcp
+WEATHER_MCP_URL=http://127.0.0.1:8050/mcp
 OPENAI_API_KEY=발급받은_API_KEY
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-API Key는 Git에 Commit하거나 화면과 로그에 출력하지 않습니다.
+MCP Server별 `.env` (각 폴더의 `.env.example` 참고):
 
-### 3단계 · MCP Server 실행
+- `hotel_mcp/.env`: 키 불필요. `HOTEL_MCP_PORT=8030`
+- `tour_spot_mcp/.env`: `TOUR_API_SERVICE_KEY` = 공공데이터포털 키 (**한국관광공사 KorService2 활용신청 필요**), `TOUR_SPOT_MCP_PORT=8040` (hotel과 충돌 피하려고 8030→8040)
+- `weather_mcp/.env`: `KMA_SERVICE_KEY` = 공공데이터포털 키 (**기상청 단기예보 + 중기예보 두 API 활용신청 필요**), `KMA_NX/NY`·`REG_ID`는 서울 기본값
 
-첫 번째 터미널을 열고 실행합니다.
+공공데이터포털 키는 계정당 하나지만 API마다 활용신청을 따로 해야 합니다. 신청 안 된
+API를 부르면 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`가 나며, 서버는 죽지 않고 Tool
+결과에 `ok: false`로 돌려줍니다.
 
-```powershell
-cd C:\mini_agent_st\mini_agent_03_mcp
-.\.venv\Scripts\Activate.ps1
-python .\mcp_server\travel_server.py
+## 팀원 서버를 LAN으로 쓸 때
+
+강의실에서 팀원 PC의 서버를 붙일 땐 루트 `.env`의 URL만 바꿉니다.
+
+```env
+TOUR_SPOT_MCP_URL=http://192.100.200.223:8030/mcp
+WEATHER_MCP_URL=http://192.100.200.170:8050/mcp
 ```
-
-이 터미널은 종료하지 않습니다. MCP endpoint는
-`http://127.0.0.1:8010/mcp`입니다. 콘솔에 `127.0.0.1:8010`에서 서버가 실행됐다는
-안내가 표시되면 다음 단계로 이동합니다.
-
-### 4단계 · FastAPI Backend 실행
-
-두 번째 터미널을 열고 실행합니다.
-
-```powershell
-cd C:\mini_agent_st\mini_agent_03_mcp
-.\.venv\Scripts\Activate.ps1
-uvicorn backend.app.main:app --reload --port 8000
-```
-
-Backend 자체 상태를 확인합니다.
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-```
-
-예상 결과의 핵심 값은 다음과 같습니다.
-
-```text
-status      : ok
-mcp_servers : travel=streamable-http, policy=stdio
-```
-
-### 5단계 · Backend와 MCP Server 연결 확인
-
-세 번째 PowerShell 터미널에서 실행합니다.
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/mcp/status
-```
-
-정상이라면 `status=connected`, `tool_count=3`이 표시됩니다. 여기서 503이 발생하면
-Frontend를 실행하기 전에 첫 번째 터미널의 MCP Server와 `TRAVEL_MCP_URL`을 먼저
-확인합니다.
-
-### 6단계 · GPT, Tool과 Resource API 확인
-
-MCP Server가 공개한 Tool을 확인합니다.
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/mcp/tools |
-    ConvertTo-Json -Depth 10
-```
-
-`travel__get_current_weather`, `travel__search_hotels`,
-`policy__get_hotel_policy`와 각 arguments Schema가 표시돼야 합니다.
-
-Agent 전체 흐름을 호출합니다.
-
-```powershell
-$body = @{
-    question = "부산 날씨와 15만원 이하 호텔을 찾고 호텔 정책도 알려 주세요."
-} | ConvertTo-Json
-Invoke-RestMethod `
-    -Uri http://127.0.0.1:8000/api/mcp/run `
-    -Method Post `
-    -ContentType "application/json" `
-    -Body $body |
-    ConvertTo-Json -Depth 10
-```
-
-응답에서 다음 순서를 확인합니다.
-
-```text
-available_tools
-→ travel__get_current_weather
-→ travel__search_hotels
-→ 검색 결과에서 hotel_id 획득
-→ policy__get_hotel_policy(hotel_id)
-→ Function Call이 없는 응답에서 Loop 종료
-→ 일반적으로 llm_calls = Tool 실행 수 + 1
-→ answer
-```
-
-Resource도 확인합니다.
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/mcp/baggage-policy |
-    ConvertTo-Json -Depth 10
-```
-
-### 7단계 · Streamlit Frontend 실행
-
-네 번째 터미널을 열고 실행합니다.
-
-```powershell
-cd C:\mini_agent_st\mini_agent_03_mcp
-.\.venv\Scripts\Activate.ps1
-streamlit run frontend\app.py --server.port 8501
-```
-
-브라우저에서 `http://127.0.0.1:8501`을 엽니다. FastAPI Swagger는
-`http://127.0.0.1:8000/docs`입니다.
-
-### 8단계 · 화면 실습
-
-다음 순서로 버튼을 실행합니다.
-
-1. 상단의 MCP 연결 상태가 `connected`인지 확인합니다.
-2. `MCP Tool 발견`을 눌러 Tool 이름과 Schema를 확인합니다.
-3. 기본 질문으로 MCP Agent를 실행합니다.
-4. 한 Round에 Tool이 하나씩 실행되는지 확인합니다.
-5. 호텔 검색 결과의 `hotel_id`가 Policy Tool arguments로 전달되는지 확인합니다.
-6. 질문을 `서울에서 15만원 이하 호텔을 찾아 주세요.`로 바꿔 Tool 선택을 비교합니다.
-7. `수하물 정책 읽기`로 Tool이 아닌 Resource 조회를 확인합니다.
-
-### 종료 순서
-
-각 실행 터미널에서 `Ctrl+C`를 누릅니다.
-
-```text
-Frontend 종료
-→ Backend 종료
-→ MCP Server 종료
-```
-
-MCP Server만 먼저 종료한 뒤 `/api/mcp/status`를 다시 호출하면 Backend가 503을
-반환하는 연결 실패 실습도 할 수 있습니다.
 
 ## 비교 포인트
 
@@ -256,20 +147,7 @@ MCP Server만 먼저 종료한 뒤 `/api/mcp/status`를 다시 호출하면 Back
 | Python 함수 직접 호출 | `tools/call` 프로토콜 호출 |
 | 앱 내부 Context | URI 기반 MCP Resource |
 
-## 환경변수
-
-```env
-BACKEND_API_URL=http://127.0.0.1:8000
-TRAVEL_MCP_URL=http://127.0.0.1:8010/mcp
-MCP_HOST=127.0.0.1
-MCP_PORT=8010
-OPENAI_API_KEY=발급받은_API_KEY
-OPENAI_MODEL=gpt-4.1-mini
-```
-
-Frontend는 Backend만 호출하고 MCP Server URL과 실행 권한은 Backend가 관리합니다.
-
-Backend는 두 MCP Server에서 발견한 Tool Schema에 Server prefix를 붙여 OpenAI
-Responses API에 전달합니다. `parallel_tool_calls=False`이므로 GPT는 한 Round에 Tool
-하나를 제안합니다. Backend가 Tool 결과를 돌려주면 GPT가 다음 Tool을 선택하며,
-Function Call 없이 답변할 때까지 Agent Loop를 반복합니다.
+Backend는 세 MCP Server에서 발견한 Tool Schema에 Server prefix(`hotel__`,
+`tour_spot__`, `weather__`)를 붙여 OpenAI Responses API에 전달합니다.
+`parallel_tool_calls=False`이므로 GPT는 한 Round에 Tool 하나를 제안하고, Function
+Call 없이 답변할 때까지 Agent Loop를 반복합니다.
