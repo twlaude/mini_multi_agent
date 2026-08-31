@@ -31,7 +31,7 @@ INSTRUCTIONS = (
     "특정 호텔의 규정·체크인·주차·취소·환불·인원추가·부대시설 질문은 검색 결과의 id 로 "
     "get_hotel_policy 를 호출하고 반환된 청크만 근거로 답하세요. "
     "객실 상세가 필요할 때만 get_room_options 를 호출하세요. 관광지는 tour_spot 서버, "
-    "날씨는 weather 서버(고정 지역)를 사용하세요. Tool 결과만 근거로 한국어 최종 답변을 "
+    "날씨는 weather 서버를 사용하고 region 인자에 지역명(서울·부산·제주 등, 목록은 list_regions)을 넣으세요. Tool 결과만 근거로 한국어 최종 답변을 "
     "작성하고, Tool 결과가 ok:false 면 그 사실을 그대로 전달하세요."
 )
 

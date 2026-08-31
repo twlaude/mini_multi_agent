@@ -29,11 +29,46 @@ MID_BASE_URL = "https://apis.data.go.kr/1360000/MidFcstInfoService"
 
 # 공공데이터포털 "Encoding" 키(%가 들어간 것)를 넣어도 자동으로 원본 키로 변환
 SERVICE_KEY = unquote(os.getenv("KMA_SERVICE_KEY", "").strip())
-NX = os.getenv("KMA_NX", "")
-NY = os.getenv("KMA_NY", "")
-LAND_REG_ID = os.getenv("KMA_LAND_REG_ID", "")
-TEMP_REG_ID = os.getenv("KMA_TEMP_REG_ID", "")
-LOCATION_NAME = os.getenv("KMA_LOCATION_NAME", "설정 지역")
+
+# .env 값은 지역 인자를 생략했을 때의 "기본 지역"으로만 쓰임
+DEFAULT_NX = os.getenv("KMA_NX", "")
+DEFAULT_NY = os.getenv("KMA_NY", "")
+DEFAULT_LAND_REG_ID = os.getenv("KMA_LAND_REG_ID", "")
+DEFAULT_TEMP_REG_ID = os.getenv("KMA_TEMP_REG_ID", "")
+DEFAULT_LOCATION_NAME = os.getenv("KMA_LOCATION_NAME", "설정 지역")
+
+# 지역명 → (단기예보 격자 nx, ny, 중기육상예보 regId, 중기기온예보 regId)
+REGIONS: dict[str, tuple[int, int, str, str]] = {
+    "서울": (60, 127, "11B00000", "11B10101"),
+    "인천": (55, 124, "11B00000", "11B20201"),
+    "수원": (60, 121, "11B00000", "11B20601"),
+    "파주": (56, 131, "11B00000", "11B20305"),
+    "춘천": (73, 134, "11D10000", "11D10301"),
+    "원주": (76, 122, "11D10000", "11D10401"),
+    "강릉": (92, 131, "11D20000", "11D20501"),
+    "속초": (87, 141, "11D20000", "11D20401"),
+    "대전": (67, 100, "11C20000", "11C20401"),
+    "세종": (66, 103, "11C20000", "11C20404"),
+    "청주": (69, 106, "11C10000", "11C10301"),
+    "충주": (76, 114, "11C10000", "11C10101"),
+    "광주": (58, 74, "11F20000", "11F20501"),
+    "목포": (50, 67, "11F20000", "21F20801"),
+    "여수": (73, 66, "11F20000", "11F20401"),
+    "전주": (63, 89, "11F10000", "11F10201"),
+    "군산": (56, 92, "11F10000", "21F10501"),
+    "대구": (89, 90, "11H10000", "11H10701"),
+    "포항": (102, 94, "11H10000", "11H10201"),
+    "안동": (91, 106, "11H10000", "11H10501"),
+    "부산": (98, 76, "11H20000", "11H20201"),
+    "울산": (102, 84, "11H20000", "11H20101"),
+    "창원": (90, 77, "11H20000", "11H20301"),
+    "진주": (81, 75, "11H20000", "11H20701"),
+    "제주": (52, 38, "11G00000", "11G00201"),
+    "서귀포": (52, 33, "11G00000", "11G00401"),
+}
+
+# "서울특별시", "부산광역시", "제주도" 같은 행정 접미사 처리용
+_REGION_SUFFIXES = ("특별자치시", "특별자치도", "광역시", "특별시", "시", "도")
 
 # 다른 PC(Backend)가 접속할 수 있게 모든 인터페이스에 바인딩. 환경변수로 바꿀 수 있음
 MCP_HOST = os.getenv("WEATHER_MCP_HOST", "0.0.0.0")
@@ -41,7 +76,12 @@ MCP_PORT = int(os.getenv("WEATHER_MCP_PORT", "8050"))
 
 mcp = FastMCP(
     "KMA Weather",
-    instructions="고정 지역의 현재 날씨와 7일 예보를 제공합니다.",
+    instructions=(
+        "전국 주요 지역의 현재 날씨와 7일 예보를 제공합니다. "
+        "지역명(예: 서울, 부산, 제주)을 인자로 넘기면 해당 지역을 조회하고, "
+        "생략하면 서버 기본 지역을 조회합니다. "
+        "지원 지역 목록은 list_regions 로 확인할 수 있습니다."
+    ),
     host=MCP_HOST,
     port=MCP_PORT,
     stateless_http=True,
@@ -53,19 +93,53 @@ class WeatherApiError(Exception):
     """사용자에게 보여줄 수 있는 날씨 API 오류입니다."""
 
 
-def require_settings(*names: str) -> None:
-    values = {
-        "KMA_SERVICE_KEY": SERVICE_KEY,
-        "KMA_NX": NX,
-        "KMA_NY": NY,
-        "KMA_LAND_REG_ID": LAND_REG_ID,
-        "KMA_TEMP_REG_ID": TEMP_REG_ID,
-    }
-    missing = [name for name in names if not values[name]]
-    if missing:
+def resolve_region(region: str) -> dict[str, Any]:
+    """지역명을 기상청 조회 좌표/구역코드로 변환합니다. 빈 값이면 .env 기본 지역."""
+    if not SERVICE_KEY:
+        raise WeatherApiError(".env에서 KMA_SERVICE_KEY 값을 설정해주세요.")
+
+    name = (region or "").strip()
+
+    if not name:
+        if not (DEFAULT_NX and DEFAULT_NY):
+            raise WeatherApiError(
+                "지역명을 지정하거나 .env에 KMA_NX, KMA_NY 기본값을 설정해주세요."
+            )
+        return {
+            "name": DEFAULT_LOCATION_NAME,
+            "nx": DEFAULT_NX,
+            "ny": DEFAULT_NY,
+            "land_reg_id": DEFAULT_LAND_REG_ID,
+            "temp_reg_id": DEFAULT_TEMP_REG_ID,
+        }
+
+    matched = name if name in REGIONS else None
+
+    if matched is None:
+        for suffix in _REGION_SUFFIXES:
+            if name.endswith(suffix) and name[: -len(suffix)] in REGIONS:
+                matched = name[: -len(suffix)]
+                break
+
+    if matched is None:
+        candidates = [known for known in REGIONS if known in name]
+        if len(candidates) == 1:
+            matched = candidates[0]
+
+    if matched is None:
         raise WeatherApiError(
-            f".env에서 {', '.join(missing)} 값을 설정해주세요."
+            f"'{name}' 지역은 지원하지 않습니다. "
+            f"지원 지역: {', '.join(REGIONS)}"
         )
+
+    nx, ny, land_reg_id, temp_reg_id = REGIONS[matched]
+    return {
+        "name": matched,
+        "nx": nx,
+        "ny": ny,
+        "land_reg_id": land_reg_id,
+        "temp_reg_id": temp_reg_id,
+    }
 
 
 def request_items(url: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -182,9 +256,7 @@ def rain_text(code: str | None) -> str:
     }.get(str(code), "확인 불가")
 
 
-def get_current_weather_data() -> dict[str, Any]:
-    require_settings("KMA_SERVICE_KEY", "KMA_NX", "KMA_NY")
-
+def get_current_weather_data(location: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(KST)
     hourly_times = [f"{hour:02d}00" for hour in range(24)]
     base_date, base_time = latest_base_time(now, hourly_times)
@@ -194,8 +266,8 @@ def get_current_weather_data() -> dict[str, Any]:
         {
             "base_date": base_date,
             "base_time": base_time,
-            "nx": NX,
-            "ny": NY,
+            "nx": location["nx"],
+            "ny": location["ny"],
         },
     )
 
@@ -209,7 +281,7 @@ def get_current_weather_data() -> dict[str, Any]:
 
     return {
         "ok": True,
-        "지역": LOCATION_NAME,
+        "지역": location["name"],
         "기준시각": f"{base_date} {base_time}",
         "현재기온_c": clean_number(temperature),
         "습도_percent": clean_number(humidity),
@@ -217,7 +289,10 @@ def get_current_weather_data() -> dict[str, Any]:
     }
 
 
-def get_short_forecast(now: datetime) -> dict[str, dict[str, Any]]:
+def get_short_forecast(
+    now: datetime,
+    location: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
     short_times = ["0200", "0500", "0800", "1100", "1400", "1700", "2000", "2300"]
     base_date, base_time = latest_base_time(now, short_times)
 
@@ -226,8 +301,8 @@ def get_short_forecast(now: datetime) -> dict[str, dict[str, Any]]:
         {
             "base_date": base_date,
             "base_time": base_time,
-            "nx": NX,
-            "ny": NY,
+            "nx": location["nx"],
+            "ny": location["ny"],
         },
     )
 
@@ -302,17 +377,28 @@ def get_short_forecast(now: datetime) -> dict[str, dict[str, Any]]:
     return result
 
 
-def get_mid_forecast(now: datetime) -> dict[str, dict[str, Any]]:
+def get_mid_forecast(
+    now: datetime,
+    location: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    land_reg_id = location["land_reg_id"]
+    temp_reg_id = location["temp_reg_id"]
+    if not (land_reg_id and temp_reg_id):
+        raise WeatherApiError(
+            f"'{location['name']}' 지역의 중기예보 구역코드가 없습니다. "
+            ".env의 KMA_LAND_REG_ID, KMA_TEMP_REG_ID를 확인해주세요."
+        )
+
     tmfc_date, tmfc_time = latest_base_time(now, ["0600", "1800"])
     tmfc = f"{tmfc_date}{tmfc_time}"
 
     land_items = request_items(
         f"{MID_BASE_URL}/getMidLandFcst",
-        {"regId": LAND_REG_ID, "tmFc": tmfc, "numOfRows": 10},
+        {"regId": land_reg_id, "tmFc": tmfc, "numOfRows": 10},
     )
     temperature_items = request_items(
         f"{MID_BASE_URL}/getMidTa",
-        {"regId": TEMP_REG_ID, "tmFc": tmfc, "numOfRows": 10},
+        {"regId": temp_reg_id, "tmFc": tmfc, "numOfRows": 10},
     )
 
     if not land_items or not temperature_items:
@@ -375,29 +461,34 @@ def merge_day(
 
 
 @mcp.tool()
-def get_current_weather() -> dict[str, Any]:
-    """'오늘 현재 날씨 알려줘'라는 질문에 고정 지역의 현재 날씨를 조회합니다."""
+def list_regions() -> dict[str, Any]:
+    """날씨 조회를 지원하는 지역명 목록을 반환합니다."""
+    return {"ok": True, "지역목록": list(REGIONS)}
+
+
+@mcp.tool()
+def get_current_weather(region: str = "") -> dict[str, Any]:
+    """지정한 지역의 현재 날씨를 조회합니다.
+
+    region: 지역명 (예: 서울, 부산, 제주, 강릉). 생략하면 서버 기본 지역.
+    """
     try:
-        return get_current_weather_data()
+        return get_current_weather_data(resolve_region(region))
     except WeatherApiError as exc:
         return {"ok": False, "message": str(exc)}
 
 
 @mcp.tool()
-def get_weekly_forecast() -> dict[str, Any]:
-    """'일주일 날씨 알려줘'라는 질문에 오늘부터 7일간의 예보를 조회합니다."""
-    try:
-        require_settings(
-            "KMA_SERVICE_KEY",
-            "KMA_NX",
-            "KMA_NY",
-            "KMA_LAND_REG_ID",
-            "KMA_TEMP_REG_ID",
-        )
+def get_weekly_forecast(region: str = "") -> dict[str, Any]:
+    """지정한 지역의 오늘부터 7일간 예보를 조회합니다.
 
+    region: 지역명 (예: 서울, 부산, 제주, 강릉). 생략하면 서버 기본 지역.
+    """
+    try:
+        location = resolve_region(region)
         now = datetime.now(KST)
-        short_forecast = get_short_forecast(now)
-        mid_forecast = get_mid_forecast(now)
+        short_forecast = get_short_forecast(now, location)
+        mid_forecast = get_mid_forecast(now, location)
         days: list[dict[str, Any]] = []
 
         for offset in range(7):
@@ -409,28 +500,17 @@ def get_weekly_forecast() -> dict[str, Any]:
             )
             days.append({"날짜": target_date.isoformat(), **day})
 
-        return {"ok": True, "지역": LOCATION_NAME, "예보": days}
+        return {"ok": True, "지역": location["name"], "예보": days}
     except WeatherApiError as exc:
         return {"ok": False, "message": str(exc)}
 
 
 if __name__ == "__main__":
-    missing = [
-        name
-        for name, value in {
-            "KMA_SERVICE_KEY": SERVICE_KEY,
-            "KMA_NX": NX,
-            "KMA_NY": NY,
-            "KMA_LAND_REG_ID": LAND_REG_ID,
-            "KMA_TEMP_REG_ID": TEMP_REG_ID,
-        }.items()
-        if not value
-    ]
-    if missing:
-        print(f"[경고] .env 에 {', '.join(missing)} 값이 비어 있습니다. "
+    if not SERVICE_KEY:
+        print(f"[경고] .env 에 KMA_SERVICE_KEY 값이 비어 있습니다. "
               f"(읽은 파일: {ENV_FILE or '없음'} / 찾는 위치: {', '.join(map(str, ENV_CANDIDATES))})", flush=True)
     else:
-        print(f"[설정 OK] {ENV_FILE} 지역={LOCATION_NAME} nx={NX} ny={NY} "
-              f"land={LAND_REG_ID} temp={TEMP_REG_ID}", flush=True)
+        print(f"[설정 OK] {ENV_FILE} 기본지역={DEFAULT_LOCATION_NAME} "
+              f"(지역 인자로 {len(REGIONS)}개 지역 조회 가능)", flush=True)
     print(f"[서버] http://{MCP_HOST}:{MCP_PORT}/mcp  (다른 PC는 http://<이PC IP>:{MCP_PORT}/mcp)", flush=True)
     mcp.run(transport="streamable-http")
