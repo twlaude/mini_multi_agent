@@ -4,9 +4,11 @@ import os
 from typing import Any
 
 import httpx
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 BASE_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 PROVIDER = os.getenv("RAG_EXAMPLE_PROVIDER", "mock")
 

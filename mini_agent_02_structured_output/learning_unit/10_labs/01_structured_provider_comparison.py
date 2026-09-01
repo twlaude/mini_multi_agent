@@ -3,10 +3,12 @@
 import os
 
 import httpx
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 BASE_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000")
 SAMPLES = {
     "travel_plan": "부산 대중교통 2박 3일 여행을 제안해 주세요.",

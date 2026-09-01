@@ -18,7 +18,7 @@ class TravelImageAnalysis(BaseModel):
     safety_notes: list[str] = Field(default_factory=list)
 
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 image_path = Path(sys.argv[1])
 content_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
 encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")

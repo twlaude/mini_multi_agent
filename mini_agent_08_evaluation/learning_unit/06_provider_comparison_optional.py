@@ -4,10 +4,12 @@ import json
 import os
 
 import httpx
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 BASE_URL = os.getenv("PYTHON_AGENT_API_URL", "http://127.0.0.1:8000")
 MESSAGE = "부산의 대표 장소를 포함한 2박 3일 여행을 제안해 주세요."
 

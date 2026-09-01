@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 output_path = Path(__file__).with_name("travel-guide.mp3")
 
