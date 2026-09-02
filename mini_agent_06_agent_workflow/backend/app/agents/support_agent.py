@@ -13,4 +13,5 @@ SUPPORT_AGENT = AgentProfile(
 근거가 충분하면 간결한 한국어 답변을 작성하세요.
 """,
     allowed_tools=frozenset({"get_order_status", "search_return_policy"}),
+    mcp_server="business-tools",
 )

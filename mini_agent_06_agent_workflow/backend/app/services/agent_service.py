@@ -12,6 +12,7 @@ def list_agents() -> list[AgentSummary]:
             description=profile.description,
             example_question=profile.example_question,
             allowed_tools=sorted(profile.allowed_tools),
+            mcp_server=profile.mcp_server,
         )
         for profile in AGENTS.values()
     ]

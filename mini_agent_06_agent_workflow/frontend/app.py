@@ -27,9 +27,13 @@ try:
     mcp_response.raise_for_status()
     mcp = mcp_response.json()
 except requests.RequestException:
-    st.warning("MCP Tool Server에 연결할 수 없습니다. 8010 포트의 Server를 먼저 실행하세요.")
+    st.warning("MCP Server 상태를 확인할 수 없습니다. Backend를 먼저 실행하세요.")
 else:
-    st.success(f"MCP 연결: {mcp['status']} · Tool {mcp['tool_count']}개")
+    for server in mcp["servers"]:
+        if server["status"] == "connected":
+            st.success(f"MCP `{server['server']}` 연결: Tool {server['tool_count']}개 · {server['endpoint']}")
+        else:
+            st.warning(f"MCP `{server['server']}` 연결 실패: {server['endpoint']} 의 Server를 먼저 실행하세요.")
 
 labels = {agent["agent_id"]: f"{agent['name']} · {agent['goal']}" for agent in agents}
 agent_id = st.selectbox("실행할 Single Agent", options=list(labels), format_func=labels.get)
@@ -38,6 +42,7 @@ selected = next(agent for agent in agents if agent["agent_id"] == agent_id)
 with st.expander("선택한 Agent의 경계", expanded=True):
     st.markdown(f"**Goal**  \n{selected['goal']}")
     st.markdown(f"**설명**  \n{selected['description']}")
+    st.markdown(f"**연결 MCP Server**  \n`{selected['mcp_server']}`")
     st.markdown("**허용된 Tool**")
     st.code("\n".join(selected["allowed_tools"]), language="text")
 

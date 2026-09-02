@@ -27,13 +27,13 @@ async def run_single_agent(profile: AgentProfile, question: str) -> dict[str, An
         "answer": None,
     }
     try:
-        tools = await discover_tools(profile.allowed_tools)
+        tools = await discover_tools(profile.allowed_tools, profile.mcp_server)
         discovered_names = {tool["name"] for tool in tools}
         missing = profile.allowed_tools - discovered_names
         if missing:
             raise RuntimeError(f"MCP Server에 필요한 Tool이 없습니다: {sorted(missing)}")
         state["trace"].append(
-            {"owner": "runtime", "stage": "agent_started", "agent": profile.agent_id}
+            {"owner": "runtime", "stage": "agent_started", "agent": profile.agent_id, "mcp_server": profile.mcp_server}
         )
         state["trace"].append(
             {"owner": "mcp", "stage": "tools_discovered", "tools": sorted(discovered_names)}
@@ -80,7 +80,7 @@ async def run_single_agent(profile: AgentProfile, question: str) -> dict[str, An
                 state["trace"].append(
                     {"step": step, "owner": "ai_agent", "stage": "model_selected_tool", "tool": call.name}
                 )
-                result, trace = await call_tool(call.name, arguments, profile.allowed_tools)
+                result, trace = await call_tool(call.name, arguments, profile.allowed_tools, profile.mcp_server)
             except (AttributeError, json.JSONDecodeError, TypeError, ValueError) as error:
                 logger.warning(
                     "잘못된 Tool Call: agent_id=%s tool=%s error=%s",

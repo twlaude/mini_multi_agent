@@ -22,7 +22,7 @@ async def mcp_status():
         return await connection_status()
     except Exception as error:
         logger.exception("MCP Server 연결 실패")
-        raise HTTPException(status_code=503, detail="MCP Server에 연결할 수 없습니다.") from error
+        raise HTTPException(status_code=503, detail="MCP Server 상태를 확인할 수 없습니다.") from error
 
 
 @router.post("/run", response_model=AgentResponse)

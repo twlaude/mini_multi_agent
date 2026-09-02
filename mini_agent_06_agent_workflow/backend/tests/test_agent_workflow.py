@@ -42,7 +42,7 @@ def tool_call(name="test_tool", arguments=None):
 
 
 def install_runtime_mocks(monkeypatch) -> None:
-    async def discover_tools(_allowed):
+    async def discover_tools(*_args):
         return [{"name": "test_tool"}]
 
     monkeypatch.setattr(runtime, "discover_tools", discover_tools)
@@ -149,7 +149,7 @@ def test_mcp_tool_error_is_sanitized(monkeypatch) -> None:
 
 
 def test_missing_required_tool_is_startup_error(monkeypatch) -> None:
-    async def discover_tools(_allowed):
+    async def discover_tools(*_args):
         return []
 
     monkeypatch.setattr(runtime, "discover_tools", discover_tools)
@@ -158,3 +158,19 @@ def test_missing_required_tool_is_startup_error(monkeypatch) -> None:
 
     assert result["termination_reason"] == "startup_error"
     assert result["trace"][-1]["error_code"] == "AGENT_STARTUP_FAILED"
+
+
+def test_registry_keeps_agent_and_server_boundaries() -> None:
+    from app.agents.registry import AGENTS
+    from app.core.config import MCP_SERVERS
+
+    assert set(AGENTS) == {"travel", "support", "order", "stock"}
+    for profile in AGENTS.values():
+        assert profile.mcp_server in MCP_SERVERS
+
+    stock = AGENTS["stock"]
+    business = {"travel", "support", "order"}
+    assert stock.mcp_server == "market-data"
+    for agent_id in business:
+        assert AGENTS[agent_id].mcp_server == "business-tools"
+        assert not (AGENTS[agent_id].allowed_tools & stock.allowed_tools)

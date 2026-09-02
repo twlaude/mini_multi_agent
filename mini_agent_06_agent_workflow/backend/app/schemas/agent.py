@@ -20,6 +20,7 @@ class AgentSummary(BaseModel):
     description: str
     example_question: str
     allowed_tools: list[str]
+    mcp_server: str
 
 
 class AgentResponse(BaseModel):

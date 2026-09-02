@@ -13,4 +13,5 @@ ORDER_AGENT = AgentProfile(
 Tool Result에 없는 상품, 재고 또는 금액을 만들지 마세요.
 """,
     allowed_tools=frozenset({"search_product", "check_inventory", "calculate_order_total"}),
+    mcp_server="business-tools",
 )

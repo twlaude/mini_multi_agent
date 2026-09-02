@@ -4,9 +4,10 @@
 
 ```text
 사용자
-├─ Travel Agent 직접 선택
-├─ Customer Support Agent 직접 선택
-└─ Order Assistant Agent 직접 선택
+├─ Travel Agent 직접 선택            ─┐
+├─ Customer Support Agent 직접 선택  ─┼─ business-tools MCP Server (8010)
+├─ Order Assistant Agent 직접 선택   ─┘
+└─ Stock Portfolio Agent 직접 선택   ── market-data MCP Server (8011)
 ```
 
 Agent가 여러 개 존재하지만 Agent 간 메시지, Coordinator, Handoff와 공유 State가 없으므로 Multi-Agent Orchestration이 아닙니다.
@@ -27,25 +28,29 @@ Mini Project 06
 → Coordinator가 Agent 선택·위임·결과 전달을 관리
 ```
 
-## 세 Single Agent
+## 네 Single Agent
 
-| Agent | Goal | 허용된 MCP Tool |
-| --- | --- | --- |
-| Travel Agent | 날씨에 맞는 장소 추천 | `get_weather`, 실내·야외 장소 검색 |
-| Customer Support Agent | 주문 상태와 반품 정책 안내 | `get_order_status`, `search_return_policy` |
-| Order Assistant Agent | 상품·재고·예상 금액 안내 | 상품 검색, 재고 확인, 금액 계산 |
+| Agent | Goal | MCP Server | 허용된 MCP Tool |
+| --- | --- | --- | --- |
+| Travel Agent | 날씨에 맞는 장소 추천 | business-tools | `get_weather`, 실내·야외 장소 검색 |
+| Customer Support Agent | 주문 상태와 반품 정책 안내 | business-tools | `get_order_status`, `search_return_policy` |
+| Order Assistant Agent | 상품·재고·예상 금액 안내 | business-tools | 상품 검색, 재고 확인, 금액 계산 |
+| Stock Portfolio Agent | 보유 종목 현재가·평가 손익 안내 | market-data | `search_stock`, `get_quote`, `get_holdings`, `calculate_pnl` |
 
 각 Agent는 자신의 Tool만 OpenAI에 전달합니다. Travel Agent가 주문 Tool을 호출하거나 Order Agent가 고객 지원 Tool을 호출할 수 없습니다.
 
+MCP Server는 두 개입니다. 사내 업무 도구(`business-tools`)와 시장 데이터(`market-data`)는 서로 다른 프로세스·포트에서 실행되고, Backend는 Agent Profile의 `mcp_server` 값으로 어느 Server에 연결할지 결정합니다. Stock Agent는 business-tools의 Tool을 볼 수 없고, 반대도 마찬가지입니다.
+
 ## 공통 Python Agent Runtime
 
-세 Agent는 [공통 Runtime](backend/app/agents/runtime.py)을 사용하지만 서로의 실행에는 참여하지 않습니다.
+네 Agent는 [공통 Runtime](backend/app/agents/runtime.py)을 사용하지만 서로의 실행에는 참여하지 않습니다.
 
 ```text
 선택한 Agent Profile
 ├─ Goal
 ├─ Instructions
 ├─ Allowed Tools
+├─ MCP Server (business-tools | market-data)
 └─ Max Steps
         ↓
 공통 순수 Python Agent Loop
@@ -59,7 +64,7 @@ Model → MCP Tool → Result → Model → 완료 또는 중단
 | AI Agent | Goal과 Result를 보고 다음 Tool 또는 최종 답변 선택 |
 | Agent Runtime | Loop, Tool Result 전달, 최대 단계와 종료 이유 관리 |
 | Backend Workflow | Agent 선택, Tool Allowlist와 arguments 검증 |
-| HTTP MCP Server | Backend 밖에서 Tool Schema와 실제 실행 제공 |
+| HTTP MCP Server ×2 | Backend 밖에서 Tool Schema와 실제 실행 제공 (업무 도구 / 시장 데이터) |
 
 AI Agent가 순서를 계획할 수 있고 Python Runtime 없이 직접 동작하는 것처럼 보일 수 있지만, 실제 Tool 실행과 반복을 연결하는 애플리케이션 코드는 항상 필요합니다. 반드시 강제할 권한과 입력 검증은 Model이 아니라 Backend가 책임집니다.
 
@@ -100,14 +105,17 @@ backend/app/
 │  ├─ travel_agent.py
 │  ├─ support_agent.py
 │  ├─ order_agent.py
+│  ├─ stock_agent.py           # market-data Server를 쓰는 4번째 Agent
 │  └─ registry.py
-├─ mcp/client.py              # 실제 tools/list와 tools/call
+├─ core/config.py             # MCP_SERVERS: 이름 → 주소
+├─ mcp/client.py              # Server별 tools/list와 tools/call
 ├─ providers/openai.py
 ├─ services/agent_service.py
 ├─ routers/agent_router.py
 └─ main.py
 
-mcp_server/business_tools_server.py
+mcp_server/business_tools_server.py   # 8010 · 여행/주문/CS Tool
+mcp_server/market_data_server.py      # 8011 · 종목/시세/보유/손익 Tool
 frontend/app.py
 ```
 
@@ -127,10 +135,16 @@ Copy-Item .env.example .env
 
 ## 실행 순서
 
-터미널 1 · HTTP MCP Server:
+터미널 1 · Business Tools MCP Server (8010):
 
 ```powershell
 python .\mcp_server\business_tools_server.py
+```
+
+터미널 1-2 · Market Data MCP Server (8011):
+
+```powershell
+python .\mcp_server\market_data_server.py
 ```
 
 터미널 2 · FastAPI Backend:

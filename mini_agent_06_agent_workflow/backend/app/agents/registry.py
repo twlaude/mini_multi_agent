@@ -1,12 +1,13 @@
 from app.agents.models import AgentProfile
 from app.agents.order_agent import ORDER_AGENT
+from app.agents.stock_agent import STOCK_AGENT
 from app.agents.support_agent import SUPPORT_AGENT
 from app.agents.travel_agent import TRAVEL_AGENT
 
 
 AGENTS: dict[str, AgentProfile] = {
     profile.agent_id: profile
-    for profile in (TRAVEL_AGENT, SUPPORT_AGENT, ORDER_AGENT)
+    for profile in (TRAVEL_AGENT, SUPPORT_AGENT, ORDER_AGENT, STOCK_AGENT)
 }
 
 
