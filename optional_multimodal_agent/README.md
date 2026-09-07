@@ -1,123 +1,155 @@
 # 멀티모달 Agent 실습
 
-사진·텍스트·음성을 입력받아 MCP Tool, RAG, 업무 DB를 사용하는 두 가지 Python AI Agent 예제입니다. Frontend는 Streamlit, Backend는 FastAPI이며 LangGraph는 사용하지 않습니다.
+사진·텍스트·음성을 입력받아 MCP Tool, RAG, 업무 DB를 사용하는 두 가지 Python AI Agent 예제. Frontend는 Streamlit, Backend는 FastAPI, LangGraph는 안 씀.
 
 | Agent     | 입력                           | 사용하는 정보                          | 출력                     |
 | --------- | ------------------------------ | -------------------------------------- | ------------------------ |
 | 제품 안내 | 제품 사진과 텍스트·음성 질문   | 제품 설명서, 호환 액세서리, 가격, 재고 | 사용법·출처·재고·음성    |
 | 시설 안내 | 안내문 사진과 텍스트·음성 질문 | 참가 안내, 시설 규정, 일정, 잔여 정원  | 참가 조건·일정·출처·음성 |
 
-제품·시설·재고·안내문은 모두 가상 실습 자료입니다. 실제 예약이나 결제는 수행하지 않습니다.
+제품·시설·재고·안내문은 모두 가상 실습 자료. 실제 예약이나 결제는 안 함.
 
-## 1. 준비
+> **맥북 기준 메모 (2026-09-07)**: 원본 README는 Windows PowerShell + 전용 pgvector 컨테이너(5433) 기준이었음. 맥북은 5433을 homebrew postgresql@17이 쓰고 있고, [infra/README.md](../infra/README.md) 메모대로 컨테이너를 새로 안 만들기 때문에 **기존 `pg` 컨테이너(5432)에 `multimodal_agent_db`만 추가**해서 쓴다. 아래 절차는 전부 그 기준.
 
-Python 3.11 이상과 OpenAI API 키가 필요합니다. PostgreSQL은 이 프로젝트 전용 컨테이너를 만들고, Redis와 Ollama는 기존 실습 환경의 서비스를 사용합니다.
+## 0. 빠른 시작 (이미 세팅된 상태)
 
-```powershell
-cd C:\mini_agent\optional_multimodal_agent
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
+```bash
+docker start pg ollama redis
+cd ~/class_personal_projects/mini_multi_agent/optional_multimodal_agent
+.venv/bin/python -m scripts.check_services   # postgres, redis OK 면 됨 (mcp·backend는 아래 4절에서 띄움)
 ```
 
-`.env`의 `OPENAI_API_KEY`를 입력합니다. 기본 연결 정보는 다음과 같습니다.
+그 다음 4절 "실행"으로.
+
+## 1. 준비 (최초 1회)
+
+Python 3.11 이상 + OpenAI API 키. 맥북엔 pyenv 3.12.7이 있고 다른 챕터도 같은 걸로 `.venv`를 만들었다.
+
+```bash
+cd ~/class_personal_projects/mini_multi_agent/optional_multimodal_agent
+~/.pyenv/versions/3.12.7/bin/python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env
+```
+
+`.env`에서 `OPENAI_API_KEY`만 채운다. 상위 폴더 `../.env`에 있는 키 그대로. 나머지 기본값은 이 맥북 기준으로 이미 맞춰져 있다.
 
 ```dotenv
-DATABASE_URL=postgresql://agent_user:agent_password@127.0.0.1:5433/multimodal_agent_db
+DATABASE_URL=postgresql://agent_user:agent_password@127.0.0.1:5432/multimodal_agent_db
 REDIS_URL=redis://127.0.0.1:6379/0
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_EMBEDDING_MODEL=embeddinggemma
 EMBEDDING_DIMENSIONS=768
 ```
 
-OpenAI는 Agent 판단, 이미지 분석, STT와 TTS에 사용합니다. RAG 임베딩은 Ollama의 `embeddinggemma`를 사용합니다.
+OpenAI는 Agent 판단, 이미지 분석, STT, TTS에 쓰고 RAG 임베딩은 Ollama `embeddinggemma`.
 
-## 2. PostgreSQL 만들기
+## 2. Docker 서비스 (기존 컨테이너 재사용)
 
-PowerShell에서 다음 명령을 한 번 실행합니다. 컨테이너, 데이터베이스, 데이터 볼륨 모두 이 프로젝트 전용 이름을 사용합니다.
+맥북엔 이미 공용 컨테이너 3개가 있다. 새로 만들지 말고 켜기만 한다.
 
-```powershell
-docker run -d `
-  --name multimodal-agent-pgvector `
-  -p 5433:5432 `
-  -e POSTGRES_DB=multimodal_agent_db `
-  -e POSTGRES_USER=agent_user `
-  -e POSTGRES_PASSWORD=agent_password `
-  -v multimodal-agent-pgvector-data:/var/lib/postgresql/data `
-  pgvector/pgvector:pg16
+| 컨테이너 | 역할                | 포트  |
+| -------- | ------------------- | ----- |
+| `pg`     | pgvector/pg16       | 5432  |
+| `ollama` | embeddinggemma 등   | 11434 |
+| `redis`  | 작업 큐·상태        | 6379  |
+
+```bash
+open -a Docker            # Docker Desktop 꺼져 있으면
+docker start pg ollama redis
+docker ps                 # 3개 Up 확인
 ```
 
-컨테이너가 생성되었는지 확인합니다.
+Ollama에 `embeddinggemma`가 없으면 한 번만:
 
-```powershell
-docker ps
+```bash
+docker exec ollama ollama pull embeddinggemma
 ```
 
-PC를 재시작한 뒤 컨테이너가 중지되어 있으면 다음 명령으로 다시 시작합니다.
+### 프로젝트 DB 만들기 (최초 1회)
 
-```powershell
-docker start multimodal-agent-pgvector
+`agent_user`는 슈퍼유저가 아니라 `vector` 확장을 못 만든다. DB 생성과 확장은 슈퍼유저 `parking`으로 한다.
+
+```bash
+docker exec pg psql -U parking -d postgres -c "CREATE DATABASE multimodal_agent_db OWNER agent_user"
+docker exec pg psql -U parking -d multimodal_agent_db -c "CREATE EXTENSION IF NOT EXISTS vector"
 ```
 
-기존 PostgreSQL이 이미 `5433` 포트를 사용 중이면 먼저 해당 컨테이너를 중지하거나, 새 컨테이너와 `DATABASE_URL`에 다른 포트를 함께 지정해야 합니다.
+## 3. 데이터 준비 (최초 1회)
 
-## 3. 데이터 준비
-
-```powershell
-# pgvector 확장과 프로젝트 테이블 생성
-.\.venv\Scripts\python.exe -m scripts.setup_database
+```bash
+# 프로젝트 테이블 생성 (sql/01~04 순서대로)
+.venv/bin/python -m scripts.setup_database
 
 # 제품·재고·시설·프로그램 가상 데이터 입력
-.\.venv\Scripts\python.exe -m scripts.seed_database
+.venv/bin/python -m scripts.seed_database
 
-# Markdown 문서를 embeddinggemma로 변환하여 RAG DB에 저장
-.\.venv\Scripts\python.exe -m scripts.ingest_knowledge
+# data/rag Markdown → embeddinggemma → pgvector 적재
+.venv/bin/python -m scripts.ingest_knowledge
 ```
 
-일정 Seed는 실행일 이후 첫 토요일부터 4주를 만듭니다. 기준일을 지정할 수도 있습니다.
+일정 Seed는 실행일 이후 첫 토요일부터 4주를 만든다. 기준일 지정도 가능.
 
-```powershell
-.\.venv\Scripts\python.exe -m scripts.seed_database --base-date 2026-09-07
+```bash
+.venv/bin/python -m scripts.seed_database --base-date 2026-09-07
 ```
 
-Seed를 다시 실행해도 기존 재고와 회차는 덮어쓰지 않습니다.
+Seed를 다시 돌려도 기존 재고와 회차는 안 덮어쓴다.
+
+확인:
+
+```bash
+docker exec pg psql -U agent_user -d multimodal_agent_db -Atc \
+  "select (select count(*) from multimodal_products),(select count(*) from multimodal_program_sessions),(select count(*) from multimodal_knowledge_chunks)"
+# 10|24|44 나오면 정상
+```
 
 ## 4. 실행
 
-네 개의 터미널을 열어 각각 실행합니다. 아래 명령은 이제 각 하위 폴더에서 바로 실행할 수 있도록 조정되어 있습니다.
+터미널(또는 tmux 창) 4개. 각 하위 폴더에서 바로 실행하도록 되어 있다.
 
-```powershell
-# 터미널 1: MCP Tool Server (변경 없음)
-cd C:\mini_agent\optional_multimodal_agent\mcp_server
-..\.venv\Scripts\python.exe main.py
+```bash
+# 터미널 1: MCP Tool Server (:8020)
+cd ~/class_personal_projects/mini_multi_agent/optional_multimodal_agent/mcp_server
+../.venv/bin/python main.py
 ```
 
-```powershell
-# 터미널 2: FastAPI Backend
-cd C:\mini_agent\optional_multimodal_agent\backend
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```bash
+# 터미널 2: FastAPI Backend (:8000)
+cd ~/class_personal_projects/mini_multi_agent/optional_multimodal_agent/backend
+../.venv/bin/python -m uvicorn app.main:app --reload
 ```
 
-```powershell
+```bash
 # 터미널 3: Redis 작업을 처리하는 Agent Worker
-cd C:\mini_agent\optional_multimodal_agent\backend
-..\.venv\Scripts\python.exe workers\agent_worker.py
+cd ~/class_personal_projects/mini_multi_agent/optional_multimodal_agent/backend
+../.venv/bin/python workers/agent_worker.py
 ```
 
-```powershell
-# 터미널 4: Streamlit Frontend
-cd C:\mini_agent\optional_multimodal_agent\frontend
-..\.venv\Scripts\python.exe -m streamlit run app.py
+```bash
+# 터미널 4: Streamlit Frontend (:8501)
+cd ~/class_personal_projects/mini_multi_agent/optional_multimodal_agent/frontend
+../.venv/bin/python -m streamlit run app.py
 ```
 
-브라우저에서 `http://localhost:8501`을 엽니다. 카메라 권한을 허용하거나 샘플 이미지를 업로드합니다. 음성 질문은 최대 120초 WAV, 이미지는 JPEG·PNG·WEBP를 지원합니다.
+브라우저에서 `http://localhost:8501`. 카메라 권한을 허용하거나 `data/samples/`의 이미지를 업로드한다. 음성 질문은 최대 120초 WAV, 이미지는 JPEG·PNG·WEBP.
 
-서비스 상태 확인:
+전체 상태 확인 (4개 다 띄운 뒤):
 
-```powershell
-cd C:\mini_agent\optional_multimodal_agent
-.\.venv\Scripts\python.exe -m scripts.check_services
+```bash
+cd ~/class_personal_projects/mini_multi_agent/optional_multimodal_agent
+.venv/bin/python -m scripts.check_services
 ```
+
+Worker가 안 떠 있으면 작업은 `queued`에서 멈춰 있다.
+
+## 4-1. 재부팅 후 / 자주 막히는 것
+
+- 컨테이너 셋 다 `Exited`면 `docker start pg ollama redis`.
+- `permission denied to create extension "vector"` → 2절의 `parking`으로 확장 생성 안 한 것.
+- `relation "multimodal_products" does not exist` → `setup_database`를 먼저 안 돌린 것.
+- `mcp FAIL` / `backend FAIL` → 터미널 1·2가 안 떠 있는 것. postgres·redis만 OK면 데이터 세팅은 정상.
+- 5433 포트는 homebrew postgresql@17 자리. 이 프로젝트는 안 쓴다.
 
 ## 5. 전체 흐름
 
@@ -239,8 +271,8 @@ data/rag/
 
 파일 이름은 DB의 대상 ID와 같아야 합니다. Markdown 첫 줄의 `# 제목`은 Agent가 보여주는 출처 제목입니다. 문서를 추가하거나 수정한 뒤 다시 적재합니다.
 
-```powershell
-.\.venv\Scripts\python.exe -m scripts.ingest_knowledge
+```bash
+.venv/bin/python -m scripts.ingest_knowledge
 ```
 
 ## 11. 실습 시나리오
@@ -258,8 +290,8 @@ data/rag/
 
 ## 12. 테스트
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+```bash
+.venv/bin/python -m pytest -q
 ```
 
 테스트는 미디어 검증, Redis 상태 전환, SSE 재연결, Agent Tool 호출, API 입력과 Streamlit 화면을 확인합니다. 테스트 대역을 사용하므로 OpenAI API 비용은 발생하지 않습니다.
