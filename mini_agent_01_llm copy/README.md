@@ -35,32 +35,79 @@ Python 판단 함수
 - Agent Workflow와 LangGraph
 - 로그인
 
-## 실행
+## 실행 (macOS, Host에서 직접)
 
-```powershell
-cd C:\mini_agent_st\mini_agent_01_llm
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
+환경 변수는 서비스별로 나뉘어 있다. 루트에는 `.env`가 없다.
+
+```text
+backend/.env   → LLM Provider·API Key·모델·Ollama 주소 (backend/.env.example 참고)
+frontend/.env  → BACKEND_API_URL (frontend/.env.example 참고)
+```
+
+```bash
+cd ~/class_personal_projects/mini_multi_agent/"mini_agent_01_llm copy"
+source .venv/bin/activate
+test -f backend/.env  || cp backend/.env.example backend/.env
+test -f frontend/.env || cp frontend/.env.example frontend/.env
 ```
 
 터미널 1:
 
-```powershell
+```bash
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
 터미널 2:
 
-```powershell
-cd C:\mini_agent_st\mini_agent_01_llm
-streamlit run .\frontend\app.py
+```bash
+streamlit run frontend/app.py
 ```
 
-Ollama는 `C:\mini_agent_st\infra`에서 먼저 실행하고 모델을 내려받아야 합니다.
-Cloud Provider는 `.env`에 해당 API Key와 모델을 설정한 경우에만 호출합니다.
+Ollama는 맥북의 기존 `ollama` 컨테이너(`docker start ollama`)를 쓴다. Cloud Provider는
+`backend/.env`에 API Key와 모델을 설정한 경우에만 호출한다.
+
+## Docker Compose로 실행
+
+Backend·Frontend를 **각각 별도 Image**로 빌드하고 Compose 하나로 묶는다. 환경 변수는 각
+서비스의 `.env`를 `env_file`로 주입하고, 컨테이너 안에서만 달라지는 주소는 `compose.yml`의
+`environment`가 덮어쓴다 (`environment` > `env_file`).
+
+```text
+backend/Dockerfile  + backend/requirements.txt  + backend/.env   → Image: mini-agent-01-backend
+frontend/Dockerfile + frontend/requirements.txt + frontend/.env  → Image: mini-agent-01-frontend
+compose.yml          두 Image를 빌드·연결 (frontend → http://backend:8000, backend → host.docker.internal:11434 Ollama)
+compose.release.yml  Docker Hub Image만 pull 해서 실행 (빌드 없음)
+push_images.sh       Docker Hub에 amd64+arm64 멀티 아키텍처로 빌드·푸시
+```
+
+```bash
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+curl -s http://127.0.0.1:8000/health
+open http://127.0.0.1:8501
+docker compose down
+```
+
+코드나 `.env`를 고친 뒤에는 `docker compose up -d --build --force-recreate` 로 다시 만든다
+(`.env`만 고쳤으면 `--build` 없이 `--force-recreate`만).
+
+### Docker Hub에 올리고 받기
+
+```bash
+docker login                     # Docker Hub 계정 (twlaude)
+bash push_images.sh 1.0.0        # buildx 멀티 아키텍처 빌드 + push
+```
+
+수신자는 `compose.release.yml` + `backend/.env.example` + `frontend/.env.example` 만 받아서
+`.env` 두 개를 만들고 실행한다.
+
+```bash
+docker compose -f compose.release.yml pull
+docker compose -f compose.release.yml up -d
+docker compose -f compose.release.yml ps
+```
 
 ## 확인 순서
 

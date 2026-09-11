@@ -37,12 +37,14 @@ mini_agent_03_mcp/
 │   ├── weather_mcp/       인혜님 — 기상청 (weather_server.py 단일 파일)
 │   ├── travel_server.py   교재 mock (미등록, 참고용)
 │   └── policy_stdio_server.py 교재 stdio mock (미등록, 참고용)
-└── .env                   Backend가 읽는 MCP URL + OpenAI 키
+├── backend/.env           Backend 전용 (MCP URL + OpenAI 키)
+├── frontend/.env          Frontend 전용 (BACKEND_API_URL)
+├── compose.yml            Image 5개 빌드·연결
+└── compose.release.yml    Docker Hub Image만 pull
 ```
 
-각 MCP Server 폴더는 제출물 그대로이며 **자기 폴더의 `.env`** 를 읽습니다
-(`hotel_mcp/.env`, `tour_spot_mcp/.env`, `weather_mcp/.env`). 프로젝트 루트 `.env`는
-Backend·Frontend 전용입니다.
+각 서비스는 **자기 폴더의 `.env`** 만 읽습니다 (`backend/.env`, `frontend/.env`,
+`hotel_mcp/.env`, `tour_spot_mcp/.env`, `weather_mcp/.env`). 프로젝트 루트에는 `.env`가 없습니다.
 
 ## 제공 Tool (총 6개)
 
@@ -108,30 +110,70 @@ curl -s -X POST http://127.0.0.1:8000/api/mcp/run -H 'Content-Type: application/
 
 ## 환경변수
 
-루트 `.env` (Backend·Frontend):
+루트에는 `.env`가 없다. 서비스마다 자기 `.env`만 가진다 (각 폴더의 `.env.example` 참고).
 
-```env
-BACKEND_API_URL=http://127.0.0.1:8000
-HOTEL_MCP_URL=http://127.0.0.1:8030/mcp
-TOUR_SPOT_MCP_URL=http://127.0.0.1:8040/mcp
-WEATHER_MCP_URL=http://127.0.0.1:8050/mcp
-OPENAI_API_KEY=발급받은_API_KEY
-OPENAI_MODEL=gpt-4.1-mini
+```text
+backend/.env                      OPENAI_API_KEY·OPENAI_MODEL + MCP 3개 주소(Host 실행용 127.0.0.1)
+frontend/.env                     BACKEND_API_URL
+mcp_server/hotel_mcp/.env         키 불필요. HOTEL_MCP_PORT=8030 (+ OPENAI_API_KEY: 정책 임베딩용)
+mcp_server/tour_spot_mcp/.env     TOUR_API_SERVICE_KEY (한국관광공사 KorService2 활용신청), TOUR_SPOT_MCP_PORT=8040
+mcp_server/weather_mcp/.env       KMA_SERVICE_KEY (기상청 단기+중기예보 활용신청), KMA_NX/NY·REG_ID 서울 기본값
 ```
 
-MCP Server별 `.env` (각 폴더의 `.env.example` 참고):
-
-- `hotel_mcp/.env`: 키 불필요. `HOTEL_MCP_PORT=8030`
-- `tour_spot_mcp/.env`: `TOUR_API_SERVICE_KEY` = 공공데이터포털 키 (**한국관광공사 KorService2 활용신청 필요**), `TOUR_SPOT_MCP_PORT=8040` (hotel과 충돌 피하려고 8030→8040)
-- `weather_mcp/.env`: `KMA_SERVICE_KEY` = 공공데이터포털 키 (**기상청 단기예보 + 중기예보 두 API 활용신청 필요**), `KMA_NX/NY`·`REG_ID`는 서울 기본값
-
-공공데이터포털 키는 계정당 하나지만 API마다 활용신청을 따로 해야 합니다. 신청 안 된
+공공데이터포털 키는 계정당 하나지만 API마다 활용신청을 따로 해야 한다. 신청 안 된
 API를 부르면 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`가 나며, 서버는 죽지 않고 Tool
-결과에 `ok: false`로 돌려줍니다.
+결과에 `ok: false`로 돌려준다.
+
+## Docker Compose로 실행 (Image 5개)
+
+서비스 5개를 **각각 별도 Image**로 빌드하고 `compose.yml` 하나로 묶는다.
+
+```text
+mcp_server/hotel_mcp/Dockerfile      → mini-agent-03-hotel-mcp      :8030
+mcp_server/tour_spot_mcp/Dockerfile  → mini-agent-03-tour-spot-mcp  :8040
+mcp_server/weather_mcp/Dockerfile    → mini-agent-03-weather-mcp    :8050
+backend/Dockerfile                   → mini-agent-03-backend        :8000  (MCP 3개 healthy 후 시작)
+frontend/Dockerfile                  → mini-agent-03-frontend       :8501  (backend healthy 후 시작)
+```
+
+환경 변수는 각 서비스 `.env`를 `env_file`로 주입하고, **컨테이너 안에서만 달라지는 값**은
+`compose.yml`의 `environment`가 덮어쓴다 (`environment` > `env_file`).
+
+| 덮어쓰는 값 | Host 실행 (.env) | Compose 안 |
+| --- | --- | --- |
+| MCP 바인딩 호스트 `*_MCP_HOST` | `127.0.0.1` | `0.0.0.0` (다른 컨테이너가 접속) |
+| Backend → MCP 주소 `*_MCP_URL` | `http://127.0.0.1:80x0/mcp` | `http://hotel-mcp:8030/mcp` 등 서비스 이름 |
+| Frontend → Backend `BACKEND_API_URL` | `http://127.0.0.1:8000` | `http://backend:8000` |
+| hotel → PostgreSQL `DATABASE_URL` | `127.0.0.1:5432` | `host.docker.internal:5432` (맥북 기존 `pg` 컨테이너) |
+
+```bash
+cd ~/class_personal_projects/mini_multi_agent/mini_agent_03_mcp
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+curl -s http://127.0.0.1:8000/api/mcp/status     # status=connected, tool_count=8
+open http://127.0.0.1:8501
+docker compose down
+```
+
+### Docker Hub에 올리고 받기
+
+```bash
+docker login
+bash push_images.sh 1.0.0        # 5개 Image를 amd64+arm64로 빌드 + push
+```
+
+수신자는 `compose.release.yml` + 각 서비스 폴더의 `.env.example` 을 받아 `.env` 5개를 만들고
+빌드 없이 실행한다.
+
+```bash
+docker compose -f compose.release.yml pull
+docker compose -f compose.release.yml up -d
+```
 
 ## 팀원 서버를 LAN으로 쓸 때
 
-강의실에서 팀원 PC의 서버를 붙일 땐 루트 `.env`의 URL만 바꿉니다.
+강의실에서 팀원 PC의 서버를 붙일 땐 `backend/.env`의 URL만 바꿉니다.
 
 ```env
 TOUR_SPOT_MCP_URL=http://192.100.200.223:8030/mcp

@@ -5,8 +5,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(PROJECT_ROOT / ".env")
+# backend/.env 를 읽는다 (Backend 전용 환경 변수). Docker에서는 compose의 env_file이 대신 주입한다.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_ROOT / ".env")
 
 
 @dataclass(frozen=True)

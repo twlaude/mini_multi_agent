@@ -1,10 +1,15 @@
 """모든 Agent 메뉴에서 공통으로 사용하는 HTTP 요청 기능."""
 
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
 
+
+# frontend/.env 를 읽는다. Docker에서는 compose의 env_file이 대신 주입한다.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 BACKEND_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 REQUEST_TIMEOUT = 70.0

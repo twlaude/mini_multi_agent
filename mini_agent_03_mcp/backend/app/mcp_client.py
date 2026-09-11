@@ -9,8 +9,9 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(PROJECT_ROOT / ".env")
+# backend/.env 를 읽는다 (Backend 전용). Docker에서는 compose의 env_file이 대신 주입한다.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_ROOT / ".env")
 
 # 5팀 MCP 서버 3개 (mcp_server/ 아래 각 폴더에서 독립 실행되는 Streamable HTTP 서버)
 #   hotel      여기어때 숙소 검색·객실·결제 링크   :8030

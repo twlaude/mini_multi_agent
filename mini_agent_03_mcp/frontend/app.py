@@ -1,8 +1,13 @@
 import os
+from pathlib import Path
 
 import httpx
 import streamlit as st
+from dotenv import load_dotenv
 
+
+# frontend/.env 를 읽는다. Docker에서는 compose의 env_file이 대신 주입한다.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 BASE_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 

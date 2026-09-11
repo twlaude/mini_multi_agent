@@ -1,0 +1,4 @@
+streamlit
+httpx
+pillow
+python-dotenv

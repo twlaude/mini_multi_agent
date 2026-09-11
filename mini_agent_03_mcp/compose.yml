@@ -1,0 +1,100 @@
+name: mini-agent-03
+
+# 서비스 5개를 각각 별도 Image로 빌드하고 하나의 Compose로 묶는다.
+#   frontend :8501 → backend :8000 → hotel-mcp :8030 / tour-spot-mcp :8040 / weather-mcp :8050
+# 환경 변수는 서비스별 .env(env_file)로 나누고, 컨테이너 안에서만 달라지는 값(바인딩 호스트,
+# 다른 컨테이너 주소, 호스트 PG 주소)은 environment로 덮어쓴다 (environment > env_file).
+# PostgreSQL/pgvector·Ollama는 이 맥북의 기존 컨테이너(pg :5432, ollama :11434)를 host.docker.internal로 재사용한다.
+services:
+  hotel-mcp:
+    build: ./mcp_server/hotel_mcp
+    env_file:
+      - ./mcp_server/hotel_mcp/.env
+    environment:
+      HOTEL_MCP_HOST: 0.0.0.0
+      HOTEL_MCP_PORT: "8030"
+      DATABASE_URL: postgresql://agent_user:agent_password@host.docker.internal:5432/agent_db
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    ports:
+      - "8030:8030"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8030), 2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  tour-spot-mcp:
+    build: ./mcp_server/tour_spot_mcp
+    env_file:
+      - ./mcp_server/tour_spot_mcp/.env
+    environment:
+      TOUR_SPOT_MCP_HOST: 0.0.0.0
+      TOUR_SPOT_MCP_PORT: "8040"
+    ports:
+      - "8040:8040"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8040), 2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  weather-mcp:
+    build: ./mcp_server/weather_mcp
+    env_file:
+      - ./mcp_server/weather_mcp/.env
+    environment:
+      WEATHER_MCP_HOST: 0.0.0.0
+      WEATHER_MCP_PORT: "8050"
+    ports:
+      - "8050:8050"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8050), 2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      HOTEL_MCP_URL: http://hotel-mcp:8030/mcp
+      TOUR_SPOT_MCP_URL: http://tour-spot-mcp:8040/mcp
+      WEATHER_MCP_URL: http://weather-mcp:8050/mcp
+    ports:
+      - "8000:8000"
+    depends_on:
+      hotel-mcp:
+        condition: service_healthy
+      tour-spot-mcp:
+        condition: service_healthy
+      weather-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    env_file:
+      - ./frontend/.env
+    environment:
+      BACKEND_API_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

@@ -20,8 +20,9 @@ from .mcp_client import mcp_sessions, result_text
 from .schemas import McpRunResult, ToolExecutionTrace
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(PROJECT_ROOT / ".env")
+# backend/.env 를 읽는다 (Backend 전용). Docker에서는 compose의 env_file이 대신 주입한다.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_ROOT / ".env")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 MAX_AGENT_ROUNDS = 10
 INSTRUCTIONS = (
