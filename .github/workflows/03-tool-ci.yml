@@ -1,0 +1,56 @@
+# GitHub Actions 목록과 실행 결과 화면에 표시되는 Workflow 이름입니다.
+name: 03 Tool CI
+
+# CI를 언제 시작할지 정의합니다. 로컬의 git pull은 GitHub 이벤트가 아니므로 실행되지 않습니다.
+on:
+  # 모든 브랜치의 Push 중, 아래 경로가 변경된 경우에만 실행합니다.
+  push:
+    paths:
+      - "mini_agent_03_tool/**"
+      - ".github/workflows/03-tool-ci.yml"
+  # Pull Request를 만들거나 갱신할 때도 같은 검사를 다시 실행합니다.
+  pull_request:
+    paths:
+      - "mini_agent_03_tool/**"
+      - ".github/workflows/03-tool-ci.yml"
+  # Actions 화면의 Run workflow 버튼으로 사람이 직접 실행할 수 있게 합니다.
+  workflow_dispatch:
+
+# 이 CI는 소스 코드를 읽기만 하므로 최소 권한만 부여합니다.
+permissions:
+  contents: read
+
+jobs:
+  # Job 하나가 Backend Test를 실행합니다.
+  # 03_tool은 아직 Dockerfile·compose.yml이 없으므로 07 Runtime CI의 Compose 검사·Image Build 단계는 넣지 않았습니다.
+  # 나중에 Docker화하면 그 두 단계를 아래에 이어 붙이면 됩니다.
+  test:
+    # GitHub가 제공하는 새 Linux 가상 머신(Runner)에서 실행합니다.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # 이후 run 명령의 기준 폴더입니다. 매 Step마다 cd를 반복하지 않습니다.
+        working-directory: mini_agent_03_tool
+    steps:
+      # Runner에는 저장소 파일이 없으므로 가장 먼저 현재 Commit을 내려받습니다.
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Backend Test와 의존성 설치에 사용할 Python 버전을 고정합니다.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # 실제 LLM Key 없이 Test에 필요한 패키지만 설치합니다. requirements.txt에 pytest가 포함되어 있습니다.
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      # Tool 선택·검증·실행 API 계약이 깨지지 않았는지 확인합니다.
+      # Runner에는 .env가 없으므로 외부 호출을 막는 mock 모드를 환경 변수로 직접 지정합니다.
+      # (WEATHER_MODE 없이 돌리면 실제 Open-Meteo를 호출해 test_allowed_tool_runs_after_validation이 실패합니다.)
+      - name: Test backend contracts
+        working-directory: mini_agent_03_tool/backend
+        env:
+          LLM_PROVIDER: mock
+          WEATHER_MODE: mock
+        run: python -m pytest tests -q
