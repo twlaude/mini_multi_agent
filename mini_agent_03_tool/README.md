@@ -107,7 +107,8 @@ cd C:\mini_agent_st\mini_agent_03_tool
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-Copy-Item .env.example .env
+Copy-Item backend\.env.example backend\.env
+Copy-Item frontend\.env.example frontend\.env
 
 cd backend
 uvicorn app.main:app --reload --port 8000
@@ -126,6 +127,62 @@ Stage 03 Tool Calling에는 `OPENAI_API_KEY`가 필요합니다. Stage 01·02의
 현재 과정은 Tool 하나를 선택하고 최대 한 번 실행하는 Cycle까지 다룹니다. 여러 Tool을
 반복 호출하는 Agent Loop는 이후 과정에서 최대 반복 횟수와 종료 조건을 함께 추가합니다.
 
+## Docker Compose로 실행
+
+Backend·Frontend를 **각각 별도 Image**로 빌드하고 Compose 하나로 묶는다. 환경 변수는 각
+서비스의 `.env`를 `env_file`로 주입하고, 컨테이너 안에서만 달라지는 주소는 `compose.yml`의
+`environment`가 덮어쓴다 (`environment` > `env_file`).
+
+```text
+backend/Dockerfile  + backend/requirements.txt  + backend/.env   → Image: mini-agent-03-tool-backend
+frontend/Dockerfile + frontend/requirements.txt + frontend/.env  → Image: mini-agent-03-tool-frontend
+compose.yml          두 Image를 빌드·연결 (frontend → http://backend:8000, backend → host.docker.internal:11434 Ollama)
+compose.release.yml  Docker Hub Image만 pull 해서 실행 (빌드 없음)
+push_images.sh       Docker Hub에 amd64+arm64 멀티 아키텍처로 빌드·푸시
+```
+
+처음 한 번 `.env` 두 개를 만든다 (`.env`는 gitignore, `.env.example`만 커밋).
+
+```bash
+cp backend/.env.example backend/.env      # API Key·WEATHER_MODE 등
+cp frontend/.env.example frontend/.env    # Host 실행용 Backend 주소
+```
+
+```bash
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+curl -s http://127.0.0.1:8000/health
+open http://127.0.0.1:8501
+docker compose down
+```
+
+서비스 하나만 따로 띄울 수도 있다.
+
+```bash
+docker compose up -d backend                 # Backend만 (Frontend는 Host에서 streamlit run)
+docker compose up -d --no-deps frontend      # Frontend만 (Backend는 Host의 uvicorn 8000을 쓰려면 frontend/.env의 BACKEND_API_URL을 http://host.docker.internal:8000 으로)
+```
+
+코드나 `.env`를 고친 뒤에는 `docker compose up -d --build --force-recreate` 로 다시 만든다
+(`.env`만 고쳤으면 `--build` 없이 `--force-recreate`만).
+
+### Docker Hub에 올리고 받기
+
+```bash
+docker login                     # Docker Hub 계정 (twlaude)
+bash push_images.sh 1.0.0        # buildx 멀티 아키텍처 빌드 + push
+```
+
+수신자는 `compose.release.yml` + `backend/.env.example` + `frontend/.env.example` 만 받아서
+`.env` 두 개를 만들고 실행한다.
+
+```bash
+docker compose -f compose.release.yml pull
+docker compose -f compose.release.yml up -d
+docker compose -f compose.release.yml ps
+```
+
 ## 실제 날씨 Tool
 
 날씨 Tool은 현재 상태와 미래 예보를 구분합니다.
@@ -133,7 +190,7 @@ Stage 03 Tool Calling에는 `OPENAI_API_KEY`가 필요합니다. Stage 01·02의
 - `get_current_weather`: 현재 기온·체감 온도·강수량·바람
 - `get_weather_forecast`: 지정한 미래 날짜의 최고·최저 기온과 강수 확률
 
-기본 `WEATHER_MODE=mock`은 인터넷 없이 결정적으로 실행됩니다. `.env`에서 다음과
+기본 `WEATHER_MODE=mock`은 인터넷 없이 결정적으로 실행됩니다. `backend/.env`에서 다음과
 같이 바꾸면 Tool 실행 단계가 Open-Meteo Geocoding API와 Forecast API를 호출합니다.
 
 ```env

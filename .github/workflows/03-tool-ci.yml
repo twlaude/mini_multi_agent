@@ -21,10 +21,8 @@ permissions:
   contents: read
 
 jobs:
-  # Job 하나가 Backend Test를 실행합니다.
-  # 03_tool은 아직 Dockerfile·compose.yml이 없으므로 07 Runtime CI의 Compose 검사·Image Build 단계는 넣지 않았습니다.
-  # 나중에 Docker화하면 그 두 단계를 아래에 이어 붙이면 됩니다.
-  test:
+  # Job 하나가 순서대로 Test → Compose 검사 → Image Build를 실행합니다.
+  test-and-build:
     # GitHub가 제공하는 새 Linux 가상 머신(Runner)에서 실행합니다.
     runs-on: ubuntu-latest
     defaults:
@@ -40,17 +38,27 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # 실제 LLM Key 없이 Test에 필요한 패키지만 설치합니다. requirements.txt에 pytest가 포함되어 있습니다.
+      # 실제 LLM Key 없이 Backend Test에 필요한 패키지만 설치합니다.
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend/requirements.txt pytest
       # Tool 선택·검증·실행 API 계약이 깨지지 않았는지 확인합니다.
-      # Runner에는 .env가 없으므로 외부 호출을 막는 mock 모드를 환경 변수로 직접 지정합니다.
-      # (WEATHER_MODE 없이 돌리면 실제 Open-Meteo를 호출해 test_allowed_tool_runs_after_validation이 실패합니다.)
+      # Runner에는 .env가 없어 코드 기본값(mock)으로 돌지만, 외부 호출이 절대 없도록 mock을 명시합니다.
       - name: Test backend contracts
         working-directory: mini_agent_03_tool/backend
         env:
           LLM_PROVIDER: mock
           WEATHER_MODE: mock
         run: python -m pytest tests -q
+      # compose.yml이 서비스별 env_file(.env)을 요구하므로 예시 파일을 복사해 검사용 환경을 만듭니다.
+      - name: Prepare env files
+        run: |
+          cp backend/.env.example backend/.env
+          cp frontend/.env.example frontend/.env
+      # Container를 시작하지 않고 Compose YAML·환경 변수 참조가 유효한지만 검사합니다.
+      - name: Validate Compose
+        run: docker compose config --quiet
+      # Dockerfile로 Backend·Frontend Image를 만들 수 있는지 확인합니다. Image를 Registry에 Push하지는 않습니다.
+      - name: Build images
+        run: docker compose build

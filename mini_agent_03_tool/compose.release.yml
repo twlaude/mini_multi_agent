@@ -1,0 +1,35 @@
+name: mini-agent-03-tool-release
+
+# Docker Hub에 올린 Image만 내려받아 실행하는 배포용 Compose (빌드 없음).
+# 수신자는 backend/.env, frontend/.env 만 자기 값으로 만들면 된다.
+services:
+  backend:
+    image: twlaude/mini-agent-03-tool-backend:1.0.0
+    env_file:
+      - ./backend/.env
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    image: twlaude/mini-agent-03-tool-frontend:1.0.0
+    env_file:
+      - ./frontend/.env
+    environment:
+      BACKEND_API_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

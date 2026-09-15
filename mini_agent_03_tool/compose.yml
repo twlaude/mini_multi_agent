@@ -1,0 +1,38 @@
+name: mini-agent-03-tool
+
+# Backend·Frontend를 각각 별도 Image로 빌드하고 하나의 Compose로 묶는다.
+# 환경 변수는 서비스별 .env(env_file)로 나누고, 컨테이너 안에서만 달라지는 주소는
+# environment로 덮어쓴다 (environment > env_file).
+# Ollama는 이 맥북의 기존 `ollama`(호스트 11434)를 host.docker.internal로 재사용한다.
+# 서비스 하나만 띄우려면: docker compose up -d backend  /  docker compose up -d --no-deps frontend
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    env_file:
+      - ./frontend/.env
+    environment:
+      BACKEND_API_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
