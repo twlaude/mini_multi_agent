@@ -1,11 +1,32 @@
 name: mini-agent-03
 
-# 서비스 5개를 각각 별도 Image로 빌드하고 하나의 Compose로 묶는다.
+# 서비스 5개를 각각 별도 Image로 빌드하고 PostgreSQL/pgvector까지 하나의 Compose로 묶는다.
 #   frontend :8501 → backend :8000 → hotel-mcp :8030 / tour-spot-mcp :8040 / weather-mcp :8050
+#   hotel-mcp → postgres :5432 (컨테이너 안 주소. 호스트에서는 ${POSTGRES_PORT:-5433})
 # 환경 변수는 서비스별 .env(env_file)로 나누고, 컨테이너 안에서만 달라지는 값(바인딩 호스트,
-# 다른 컨테이너 주소, 호스트 PG 주소)은 environment로 덮어쓴다 (environment > env_file).
-# PostgreSQL/pgvector·Ollama는 이 맥북의 기존 컨테이너(pg :5432, ollama :11434)를 host.docker.internal로 재사용한다.
+# 다른 컨테이너 주소, PG 주소)은 environment로 덮어쓴다 (environment > env_file).
+# PostgreSQL/pgvector는 이 Compose의 postgres 서비스(볼륨 postgres_data, 첫 생성 때 postgres/init.sql 실행)를 쓴다.
+# 호텔 규정 청크는 첫 조회 때 hotel-mcp가 알아서 색인하므로 빈 DB로 시작해도 된다.
+# Ollama는 HOTEL_EMBEDDING_PROVIDER=ollama일 때만 이 맥북의 기존 컨테이너(:11434)를 host.docker.internal로 재사용한다.
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: agent_db
+      POSTGRES_USER: agent_user
+      POSTGRES_PASSWORD: agent_password
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"   # 호스트에서 psql로 볼 때만. 맥북 공용 pg가 5432라 기본 5433
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_user -d agent_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   hotel-mcp:
     build: ./mcp_server/hotel_mcp
     env_file:
@@ -13,12 +34,15 @@ services:
     environment:
       HOTEL_MCP_HOST: 0.0.0.0
       HOTEL_MCP_PORT: "8030"
-      DATABASE_URL: postgresql://agent_user:agent_password@host.docker.internal:5432/agent_db
+      DATABASE_URL: postgresql://agent_user:agent_password@postgres:5432/agent_db
       OLLAMA_BASE_URL: http://host.docker.internal:11434
     ports:
       - "8030:8030"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8030), 2)"]
       interval: 5s
@@ -98,3 +122,6 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  postgres_data:

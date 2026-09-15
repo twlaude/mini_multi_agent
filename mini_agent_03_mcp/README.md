@@ -39,8 +39,9 @@ mini_agent_03_mcp/
 │   └── policy_stdio_server.py 교재 stdio mock (미등록, 참고용)
 ├── backend/.env           Backend 전용 (MCP URL + OpenAI 키)
 ├── frontend/.env          Frontend 전용 (BACKEND_API_URL)
-├── compose.yml            Image 5개 빌드·연결
-└── compose.release.yml    Docker Hub Image만 pull
+├── postgres/init.sql      PostgreSQL 첫 생성 때 실행되는 스키마 (교재 infra/postgres/init.sql 과 동일)
+├── compose.yml            Image 5개 빌드·연결 + PostgreSQL/pgvector
+└── compose.release.yml    Docker Hub Image만 pull + PostgreSQL/pgvector
 ```
 
 각 서비스는 **자기 폴더의 `.env`** 만 읽습니다 (`backend/.env`, `frontend/.env`,
@@ -124,9 +125,9 @@ mcp_server/weather_mcp/.env       KMA_SERVICE_KEY (기상청 단기+중기예보
 API를 부르면 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`가 나며, 서버는 죽지 않고 Tool
 결과에 `ok: false`로 돌려준다.
 
-## Docker Compose로 실행 (Image 5개)
+## Docker Compose로 실행 (Image 5개 + PostgreSQL)
 
-서비스 5개를 **각각 별도 Image**로 빌드하고 `compose.yml` 하나로 묶는다.
+서비스 5개를 **각각 별도 Image**로 빌드하고 PostgreSQL/pgvector까지 `compose.yml` 하나로 묶는다.
 
 ```text
 mcp_server/hotel_mcp/Dockerfile      → mini-agent-03-hotel-mcp      :8030
@@ -134,7 +135,13 @@ mcp_server/tour_spot_mcp/Dockerfile  → mini-agent-03-tour-spot-mcp  :8040
 mcp_server/weather_mcp/Dockerfile    → mini-agent-03-weather-mcp    :8050
 backend/Dockerfile                   → mini-agent-03-backend        :8000  (MCP 3개 healthy 후 시작)
 frontend/Dockerfile                  → mini-agent-03-frontend       :8501  (backend healthy 후 시작)
+pgvector/pgvector:pg16 (공식 Image)  → postgres                     :5432  (hotel-mcp는 이게 healthy 된 뒤 시작)
 ```
+
+`postgres`는 볼륨 `postgres_data`에 데이터를 두고, 볼륨을 **처음 만들 때만** `postgres/init.sql`로
+`vector` 확장과 `documents` 테이블을 만든다. 호텔 규정 청크는 첫 조회 때 hotel-mcp가 알아서 색인하니
+빈 DB로 시작해도 된다. 호스트에서 직접 보려면 `docker compose exec postgres psql -U agent_user -d agent_db`
+(또는 `127.0.0.1:5433` — 맥북 공용 `pg`가 5432를 쓰고 있어 기본값을 5433으로 뒀다. `POSTGRES_PORT`로 변경).
 
 환경 변수는 각 서비스 `.env`를 `env_file`로 주입하고, **컨테이너 안에서만 달라지는 값**은
 `compose.yml`의 `environment`가 덮어쓴다 (`environment` > `env_file`).
@@ -144,7 +151,7 @@ frontend/Dockerfile                  → mini-agent-03-frontend       :8501  (ba
 | MCP 바인딩 호스트 `*_MCP_HOST` | `127.0.0.1` | `0.0.0.0` (다른 컨테이너가 접속) |
 | Backend → MCP 주소 `*_MCP_URL` | `http://127.0.0.1:80x0/mcp` | `http://hotel-mcp:8030/mcp` 등 서비스 이름 |
 | Frontend → Backend `BACKEND_API_URL` | `http://127.0.0.1:8000` | `http://backend:8000` |
-| hotel → PostgreSQL `DATABASE_URL` | `127.0.0.1:5432` | `host.docker.internal:5432` (맥북 기존 `pg` 컨테이너) |
+| hotel → PostgreSQL `DATABASE_URL` | `127.0.0.1:5432` | `postgres:5432` (Compose 안 `postgres` 서비스) |
 
 ```bash
 cd ~/class_personal_projects/mini_multi_agent/mini_agent_03_mcp
@@ -153,7 +160,8 @@ docker compose up --build -d
 docker compose ps
 curl -s http://127.0.0.1:8000/api/mcp/status     # status=connected, tool_count=8
 open http://127.0.0.1:8501
-docker compose down
+docker compose down        # 컨테이너만 정리, PG 데이터(postgres_data 볼륨)는 남는다
+docker compose down -v     # 볼륨까지 삭제 (색인한 호텔 규정도 지워진다)
 ```
 
 ### Docker Hub에 올리고 받기
@@ -163,8 +171,8 @@ docker login
 bash push_images.sh 1.0.0        # 5개 Image를 amd64+arm64로 빌드 + push
 ```
 
-수신자는 `compose.release.yml` + 각 서비스 폴더의 `.env.example` 을 받아 `.env` 5개를 만들고
-빌드 없이 실행한다.
+수신자는 `compose.release.yml` + `postgres/init.sql` + 각 서비스 폴더의 `.env.example` 을 받아
+`.env` 5개를 만들고 빌드 없이 실행한다 (PostgreSQL은 공식 `pgvector/pgvector:pg16` Image라 따로 올리지 않는다).
 
 ```bash
 docker compose -f compose.release.yml pull
